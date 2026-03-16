@@ -93,14 +93,20 @@ def list_notes(notes_dir):
         metadata = parse_yaml_header(note_file)
         title = metadata.get('title', note_file.name)
         created = metadata.get('created', 'N/A')
+        modified = metadata.get('modified', 'N/A')
         tags = metadata.get('tags', '')
+        author = metadata.get('author', 'N/A')
 
         print(f"\n{note_file.name}")
         print(f"  Title: {title}")
         if created != 'N/A':
             print(f"  Created: {created}")
+        if modified != 'N/A':
+            print(f" Modified: {modified}")
         if tags:
             print(f"  Tags: {tags}")
+        if author:
+            print(f' Author: {author}')
 
     print(f"\n{len(note_files)} note(s) found.")
     return True
