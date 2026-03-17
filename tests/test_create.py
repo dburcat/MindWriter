@@ -93,6 +93,69 @@ def test_create_note():
         print("All create tests passed!")
         return True
 
+def test_edit_note():
+    """Test editing a note."""
+    print("Testing MindWriter edit functionality...")
+
+    # Create a test note first
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        notes_dir = temp_path / "notes"
+        notes_dir.mkdir()
+
+        # Create a test note
+        test_note = notes_dir / "test_edit.md"
+        with open(test_note, 'w') as f:
+            f.write("""---
+title: Test Edit
+created: 2026-03-17T12:00:00
+modified: 2026-03-17T12:00:00
+tags: [test]
+author: testuser
+---
+
+Original content.
+""")
+
+        # Path to MindWriter.py
+        mindwriter_path = Path(__file__).parent.parent / "mindwriter.py"
+
+        # Run the edit command
+        cmd = [sys.executable, str(mindwriter_path), 'edit', 'test_edit.md']
+        env = os.environ.copy()
+        env['NOTES_DIR'] = str(temp_path)
+        env['EDITOR'] = 'true'  # Use 'true' as editor to exit immediately
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env
+        )
+
+        # Wait for completion
+        stdout, stderr = process.communicate()
+
+        if process.returncode != 0:
+            print(f"Command failed with return code {process.returncode}")
+            print(f"stdout: {stdout}")
+            print(f"stderr: {stderr}")
+            return False
+
+        # Check that the file still exists
+        if test_note.exists():
+            print("✓ Edit command ran successfully and file still exists")
+            return True
+        else:
+            print("✗ File was deleted during edit")
+            return False
+
 if __name__ == "__main__":
     success = test_create_note()
+    if success:
+        success = test_edit_note()
+    if success:
+        print("All tests passed!")
+    else:
+        print("Some tests failed!")
     sys.exit(0 if success else 1)

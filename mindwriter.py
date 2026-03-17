@@ -178,6 +178,66 @@ Write your note content here.
         return False
 
 
+def edit_note(notes_dir, note_id):
+    """Edit an existing note by opening it in the default editor."""
+    # Find the note file
+    notes_subdir = notes_dir / "notes"
+    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
+
+    note_file = None
+    for search_dir in search_dirs:
+        candidate = search_dir / note_id
+        if candidate.exists():
+            note_file = candidate
+            break
+
+    if not note_file:
+        print(f"Error: Note '{note_id}' not found.")
+        return False
+
+    # Open in default editor
+    editor = os.environ.get('EDITOR', 'vi')
+    try:
+        os.system(f"{editor} {note_file}")
+        print(f"Note edited: {note_file}")
+        return True
+    except Exception as e:
+        print(f"Error opening editor: {e}")
+        return False
+
+
+def delete_note(notes_dir, note_id):
+    """Delete an existing note after confirmation."""
+    # Find the note file
+    notes_subdir = notes_dir / "notes"
+    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
+
+    note_file = None
+    for search_dir in search_dirs:
+        candidate = search_dir / note_id
+        if candidate.exists():
+            note_file = candidate
+            break
+
+    if not note_file:
+        print(f"Error: Note '{note_id}' not found.")
+        return False
+
+    # Ask for confirmation
+    confirm = input(f"Are you sure you want to delete '{note_id}'? (y/N): ").strip().lower()
+    if confirm == 'y' or confirm == 'yes':
+        try:
+            note_file.unlink()
+            print(f"Note deleted: {note_id}")
+            return True
+        except Exception as e:
+            print(f"Error deleting note: {e}")
+            return False
+    else:
+        print("Deletion cancelled.")
+        return True
+
+
 def list_notes(notes_dir):
     """Interactively list and browse notes with pagination."""
     # Check if notes directory exists
@@ -243,7 +303,7 @@ def list_notes(notes_dir):
         print(f"Page {current_page}/{total_pages} - {len(page_notes)} notes shown.")
 
         # Prompt for user input
-        prompt = input("Enter number to read note, 'n' for next page, 'p' for previous, 'q' to quit: ").strip().lower()
+        prompt = input("Enter number to select note, 'n' for next page, 'p' for previous, 'q' to quit: ").strip().lower()
 
         if prompt == 'q':
             break
@@ -262,7 +322,25 @@ def list_notes(notes_dir):
                 num = int(prompt)
                 if 1 <= num <= len(page_notes):
                     selected_file = page_notes[num - 1]
-                    read_note(notes_dir, selected_file.name)
+                    selected_id = selected_file.name
+                    
+                    # Submenu for selected note
+                    while True:
+                        action = input(f"Selected: {selected_id}\n(r)ead, (e)dit, (d)elete, (b)ack: ").strip().lower()
+                        if action == 'r':
+                            read_note(notes_dir, selected_id)
+                            break
+                        elif action == 'e':
+                            edit_note(notes_dir, selected_id)
+                            break
+                        elif action == 'd':
+                            delete_note(notes_dir, selected_id)
+                            # After delete, refresh the list
+                            break
+                        elif action == 'b':
+                            break
+                        else:
+                            print("Invalid option. Use r, e, d, or b.")
                 else:
                     print("Invalid number. Please enter a number between 1 and", len(page_notes))
             except ValueError:
@@ -330,6 +408,20 @@ def main():
         finish(0 if success else 1)
     elif command == "create":
         success = create_note(notes_dir)
+        finish(0 if success else 1)
+    elif command == "edit":
+        if len(sys.argv) < 3:
+            print("Error: edit requires a note-id.", file=sys.stderr)
+            finish(1)
+        note_id = sys.argv[2]
+        success = edit_note(notes_dir, note_id)
+        finish(0 if success else 1)
+    elif command == "delete":
+        if len(sys.argv) < 3:
+            print("Error: delete requires a note-id.", file=sys.stderr)
+            finish(1)
+        note_id = sys.argv[2]
+        success = delete_note(notes_dir, note_id)
         finish(0 if success else 1)
     else:
         print(f"Error: Unknown command '{command}'", file=sys.stderr)
