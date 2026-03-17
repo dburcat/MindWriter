@@ -96,6 +96,88 @@ def read_note(notes_dir, note_id):
         return False
 
 
+def create_note(notes_dir):
+    """Create a new note by opening it in the default editor."""
+    # Ensure notes directory exists
+    notes_subdir = notes_dir / "notes"
+    if not notes_subdir.exists():
+        try:
+            notes_subdir.mkdir(parents=True)
+            print(f"Created notes directory: {notes_subdir}")
+        except Exception as e:
+            print(f"Error creating notes directory: {e}")
+            return False
+
+    # Generate filename with timestamp
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    temp_filename = f"note_{timestamp}.md"
+    temp_file = notes_subdir / temp_filename
+
+    # Create template content
+    template_content = f"""---
+title: 
+created: {datetime.now().isoformat()}
+modified: {datetime.now().isoformat()}
+tags: []
+author: 
+priority: 
+---
+
+# New Note
+
+Write your note content here.
+"""
+
+    # Write the template file
+    try:
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            f.write(template_content)
+    except Exception as e:
+        print(f"Error creating note file: {e}")
+        return False
+
+    # Open in default editor
+    editor = os.environ.get('EDITOR', 'vi')
+    try:
+        os.system(f"{editor} {temp_file}")
+    except Exception as e:
+        print(f"Error opening editor: {e}")
+        return False
+
+    # After editing, read the title and rename the file
+    try:
+        metadata = parse_yaml_header(temp_file)
+        title = metadata.get('title', '').strip()
+        if not title:
+            print("Warning: No title provided. Keeping temporary filename.")
+            final_file = temp_file
+        else:
+            # Sanitize title for filename
+            import re
+            filename = re.sub(r'[^\w\-_\.]', '_', title.lower().replace(' ', '_'))
+            filename = f"{filename}.md"
+            final_file = notes_subdir / filename
+
+            # Check if file already exists
+            counter = 1
+            while final_file.exists() and final_file != temp_file:
+                base, ext = filename.rsplit('.', 1)
+                filename = f"{base}_{counter}.{ext}"
+                final_file = notes_subdir / filename
+                counter += 1
+
+            # Rename the file
+            if final_file != temp_file:
+                temp_file.rename(final_file)
+
+        print(f"Note saved: {final_file}")
+        return True
+    except Exception as e:
+        print(f"Error processing note: {e}")
+        return False
+
+
 def list_notes(notes_dir):
     """Interactively list and browse notes with pagination."""
     # Check if notes directory exists
@@ -142,6 +224,7 @@ def list_notes(notes_dir):
             modified = metadata.get('modified', 'N/A')
             tags = metadata.get('tags', '')
             author = metadata.get('author', 'N/A')
+            priority = metadata.get('priority', '')
 
             print(f"{i}. {note_file.name}")
             print(f"   Title: {title}")
@@ -153,6 +236,8 @@ def list_notes(notes_dir):
                 print(f"   Tags: {tags}")
             if author:
                 print(f"   Author: {author}")
+            if priority:
+                print(f"   Priority: {priority}")
             print()
 
         print(f"Page {current_page}/{total_pages} - {len(page_notes)} notes shown.")
@@ -242,6 +327,9 @@ def main():
             finish(1)
         note_id = sys.argv[2]
         success = read_note(notes_dir, note_id)
+        finish(0 if success else 1)
+    elif command == "create":
+        success = create_note(notes_dir)
         finish(0 if success else 1)
     else:
         print(f"Error: Unknown command '{command}'", file=sys.stderr)

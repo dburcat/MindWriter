@@ -45,7 +45,7 @@ def test_pagination():
         print(f"Created {len(list(test_notes_dir.glob('*.md')))} test notes")
 
         # Run the list command with 'q' input to quit immediately
-        mindwriter_path = Path(__file__).parent.parent / "MindWriter.py"
+        mindwriter_path = Path(__file__).parent.parent / "mindwriter.py"
 
         cmd = [sys.executable, str(mindwriter_path), 'list']
         env = os.environ.copy()

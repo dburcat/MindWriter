@@ -7,8 +7,15 @@ This directory contains tests for the MindWriter notes manager.
 To run the pagination test:
 
 ```bash
-cd /Users/david/Projects/MindWriter/python
+cd /Users/david/Projects/MindWriter
 python3 tests/test_pagination.py
+```
+
+To run the create test:
+
+```bash
+cd /Users/david/Projects/MindWriter
+python3 tests/test_create.py
 ```
 
 ## Test Descriptions
