@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
 """
-Future Proof Notes Manager - MindWriter v0.1
+Future Proof Notes Manager - Version Zero
 A personal notes manager using text files with YAML headers.
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
-import mindwriter_shell
 
 
 def setup():
     """Initialize the notes application."""
-    # Define the notes directory in HOME, or use custom path for testing
-    custom_notes_dir = os.environ.get('NOTES_DIR')
-    if custom_notes_dir:
-        notes_dir = Path(custom_notes_dir)
-    else:
-        notes_dir = Path.home() / ".notes"
+    os.system('clear')
+    print("MindWriter Notes Manager v0.1")
+    print("=" * 40)
+
+    # Define the notes directory in HOME
+    notes_dir = Path.home() / ".notes"
 
     # Check if notes directory exists
     if not notes_dir.exists():
-        # For CLI version, we don't automatically create it
-        pass
+        print(f"Notes directory not found at {notes_dir}")
+        print("Run 'notes init' to create it.")
+    else:
+        print(f"Notes directory: {notes_dir}")
 
+    print()
     return notes_dir
 
 
@@ -269,8 +271,8 @@ def list_notes(notes_dir):
     items_per_page = 10
     total_pages = (total_notes + items_per_page - 1) // items_per_page
     current_page = 1
-
-    while True:
+    run = True
+    while run is True:
         # Display current page
         start_index = (current_page - 1) * items_per_page
         end_index = start_index + items_per_page
@@ -304,10 +306,14 @@ def list_notes(notes_dir):
         print(f"Page {current_page}/{total_pages} - {len(page_notes)} notes shown. {len(note_files)} Total notes in folder")
 
         # Prompt for user input
-        prompt = input("Enter number to select note, 'n' for next page, 'p' for previous, 'q' to quit: ").strip().lower()
+        prompt = input("Enter number to select note, 'n' for next page, 'p' for previous, 'c' to create note, 'q' to quit: ").strip().lower()
 
         if prompt == 'q':
             break
+        elif prompt == 'c':
+            create_note(notes_dir)
+            run = False
+            list_notes(notes_dir)
         elif prompt == 'n':
             if current_page < total_pages:
                 current_page += 1
@@ -324,7 +330,24 @@ def list_notes(notes_dir):
                 if 1 <= num <= len(page_notes):
                     selected_file = page_notes[num - 1]
                     selected_id = selected_file.name
-                    read_note(notes_dir, selected_id)
+                    
+                    # Submenu for selected note
+                    while True:
+                        action = input(f"Selected: {selected_id}\n(r)ead, (e)dit, (d)elete, (b)ack: ").strip().lower()
+                        if action == 'r':
+                            read_note(notes_dir, selected_id)
+                            break
+                        elif action == 'e':
+                            edit_note(notes_dir, selected_id)
+                            break
+                        elif action == 'd':
+                            delete_note(notes_dir, selected_id)
+                            # After delete, refresh the list
+                            break
+                        elif action == 'b':
+                            break
+                        else:
+                            print("Invalid option. Use r, e, d, or b.")
                 else:
                     print("Invalid number. Please enter a number between 1 and", len(page_notes))
             except ValueError:
@@ -341,7 +364,7 @@ Future Proof Notes Manager v0.1
 Usage: python3 mindwriter.py [command]
 
 Available commands:
---help                     # Display help information
+help                     # Display help information
 create                     # Create a new note (opens in default editor)
 list                       # Interactively list and browse notes (paginated, 10 per page)
 read <note-id>             # Display a specific note
@@ -349,7 +372,6 @@ edit <note-id>             # Edit a specific note
 delete <note-id>           # Delete a specific note, asks confirmation before removal
 search "query"             # Search notes for text (title, tags, content)
 stats                      # Display statistics about your notes
-shell                      # Run interactive terminal shell
 
 Notes directory: {}
 
@@ -357,63 +379,67 @@ Notes directory: {}
     print(help_text.strip())
 
 
-def finish(exit_code=0):
+
+def command_loop(notes_dir):
+    """Main command loop for processing user input."""
+    while True:
+        try:
+            # Get user input
+            command = input("notes> ").strip().lower()
+
+            # Handle empty input
+            if not command:
+                continue
+
+            # Process commands
+            if command == "quit" or command == "q":
+                break
+            elif command == "help":
+                show_help()
+            elif command == "list":
+                list_notes(notes_dir)
+            elif command == "read":
+                note_id = input("note-id> ")
+                read_note(notes_dir, note_id)
+            elif command == "edit":
+                note_id = input("note-id> ")
+                edit_note(notes_dir, note_id)
+            elif command == "delete":
+                note_id = input("note-id> ")
+                delete_note(notes_dir, note_id)
+            elif command == "list":
+                list_notes(notes_dir)
+            elif command == "search":
+                continue
+            else:
+                print(f"Unknown command: '{command}'")
+                print("Type 'help' for available commands.")
+
+        except EOFError:
+            # Handle Ctrl+D
+            print()
+            break
+        except KeyboardInterrupt:
+            # Handle Ctrl+C
+            print("\nUse 'quit' to exit.")
+
+
+def finish():
     """Clean up and exit the application."""
-    sys.exit(exit_code)
+    print("\nGoodbye!")
+    sys.exit(0)
 
 
 def main():
-    """Main entry point for the notes CLI application."""
+    """Main entry point for the notes application."""
     # Setup
     notes_dir = setup()
 
-    # Parse command-line arguments
-    if len(sys.argv) < 2:
-        # No command provided
-        print("Error: No command provided.", file=sys.stderr)
-        print("Usage: python3 mindwriter.py [command]", file=sys.stderr)
-        print("Try 'python3 mindwriter.py help' for more information.", file=sys.stderr)
-        finish(1)
+    # Command loop
+    command_loop(notes_dir)
 
-    command = sys.argv[1].lower()
-
-    # Process command
-    if command == "help":
-        show_help()
-        finish(0)
-    elif command == "list":
-        success = list_notes(notes_dir)
-        finish(0 if success else 1)
-    elif command == "read":
-        if len(sys.argv) < 3:
-            print("Error: read requires a note-id.", file=sys.stderr)
-            finish(1)
-        note_id = sys.argv[2]
-        success = read_note(notes_dir, note_id)
-        finish(0 if success else 1)
-    elif command == "create":
-        success = create_note(notes_dir)
-        finish(0 if success else 1)
-    elif command == "edit":
-        if len(sys.argv) < 3:
-            print("Error: edit requires a note-id.", file=sys.stderr)
-            finish(1)
-        note_id = sys.argv[2]
-        success = edit_note(notes_dir, note_id)
-        finish(0 if success else 1)
-    elif command == "delete":
-        if len(sys.argv) < 3:
-            print("Error: delete requires a note-id.", file=sys.stderr)
-            finish(1)
-        note_id = sys.argv[2]
-        success = delete_note(notes_dir, note_id)
-        finish(0 if success else 1)
-    elif command == "shell":
-        mindwriter_shell.main()
-    else:
-        print(f"Error: Unknown command '{command}'", file=sys.stderr)
-        print("Try 'mindwriter.py help' for more information.", file=sys.stderr)
-        finish(1)
+    # Finish
+    finish()
 
 
 if __name__ == "__main__":
