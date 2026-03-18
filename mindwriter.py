@@ -8,6 +8,7 @@ import sys
 import os
 from pathlib import Path
 import mindwriter_shell
+import slugify
 
 
 def setup():
@@ -155,8 +156,9 @@ Write your note content here.
             final_file = temp_file
         else:
             # Sanitize title for filename
-            import re
-            filename = re.sub(r'[^\w\-_\.]', '_', title.lower().replace(' ', '_'))
+            #import re
+            #filename = re.sub(r'[^\w\-_\.]', '_', title.lower().replace(' ', '_'))
+            filename = slugify.slugify(title)
             filename = f"{filename}.md"
             final_file = notes_subdir / filename
 
