@@ -7,238 +7,7 @@ A personal notes manager using text files with YAML headers.
 import os
 import sys
 from pathlib import Path
-
-
-def setup():
-    """Initialize the notes application."""
-    os.system('clear')
-    print("MindWriter Notes Manager v0.1")
-    print("=" * 40)
-
-    # Define the notes directory in HOME
-    notes_dir = Path.home() / ".notes"
-
-    # Check if notes directory exists
-    if not notes_dir.exists():
-        print(f"Notes directory not found at {notes_dir}")
-        print("Run 'notes init' to create it.")
-    else:
-        print(f"Notes directory: {notes_dir}")
-
-    print()
-    return notes_dir
-
-
-def parse_yaml_header(file_path):
-    """
-    Parse YAML front matter from a note file.
-    Returns a dictionary with metadata and the content.
-    """
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-
-        # Check if file starts with YAML front matter
-        if not lines or lines[0].strip() != '---':
-            return {'title': file_path.name, 'file': file_path.name}
-
-        # Find the closing ---
-        yaml_end = -1
-        for i in range(1, len(lines)):
-            if lines[i].strip() == '---':
-                yaml_end = i
-                break
-
-        if yaml_end == -1:
-            return {'title': file_path.name, 'file': file_path.name}
-
-        # Parse YAML lines (simple parsing for basic key: value pairs)
-        metadata = {'file': file_path.name}
-        for line in lines[1:yaml_end]:
-            line = line.strip()
-            if ':' in line:
-                key, value = line.split(':', 1)
-                key = key.strip()
-                value = value.strip()
-                metadata[key] = value
-
-        return metadata
-
-    except Exception as e:
-        return {'title': file_path.name, 'file': file_path.name, 'error': str(e)}
-
-
-def read_note(notes_dir, note_id):
-    """Read and display the content of a specific note."""
-    # Find the note file
-    notes_subdir = notes_dir / "notes"
-    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
-
-    note_file = None
-    for search_dir in search_dirs:
-        candidate = search_dir / note_id
-        if candidate.exists():
-            note_file = candidate
-            break
-
-    if not note_file:
-        print(f"Error: Note '{note_id}' not found.")
-        return False
-
-    # Read and display the note
-    try:
-        with open(note_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-        print(f"\nContent of {note_id}:")
-        print("=" * 60)
-        print(content)
-        input("Press Enter to return to list...")
-        return True
-    except Exception as e:
-        print(f"Error reading note: {e}")
-        return False
-
-
-def create_note(notes_dir):
-    """Create a new note by opening it in the default editor."""
-    # Ensure notes directory exists
-    notes_subdir = notes_dir / "notes"
-    if not notes_subdir.exists():
-        try:
-            notes_subdir.mkdir(parents=True)
-            print(f"Created notes directory: {notes_subdir}")
-        except Exception as e:
-            print(f"Error creating notes directory: {e}")
-            return False
-
-    # Generate filename with timestamp
-    from datetime import datetime
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    temp_filename = f"note_{timestamp}.md"
-    temp_file = notes_subdir / temp_filename
-
-    # Create template content
-    template_content = f"""---
-title: 
-created: {datetime.now().isoformat()}
-modified: {datetime.now().isoformat()}
-tags: []
-author: 
-priority: 
----
-
-# New Note
-
-Write your note content here.
-"""
-
-    # Write the template file
-    try:
-        with open(temp_file, 'w', encoding='utf-8') as f:
-            f.write(template_content)
-    except Exception as e:
-        print(f"Error creating note file: {e}")
-        return False
-
-    # Open in default editor
-    editor = os.environ.get('EDITOR', 'vi')
-    try:
-        os.system(f"{editor} {temp_file}")
-    except Exception as e:
-        print(f"Error opening editor: {e}")
-        return False
-
-    # After editing, read the title and rename the file
-    try:
-        metadata = parse_yaml_header(temp_file)
-        title = metadata.get('title', '').strip()
-        if not title:
-            print("Warning: No title provided. Keeping temporary filename.")
-            final_file = temp_file
-        else:
-            # Sanitize title for filename
-            import re
-            filename = re.sub(r'[^\w\-_\.]', '_', title.lower().replace(' ', '_'))
-            filename = f"{filename}.md"
-            final_file = notes_subdir / filename
-
-            # Check if file already exists
-            counter = 1
-            while final_file.exists() and final_file != temp_file:
-                base, ext = filename.rsplit('.', 1)
-                filename = f"{base}_{counter}.{ext}"
-                final_file = notes_subdir / filename
-                counter += 1
-
-            # Rename the file
-            if final_file != temp_file:
-                temp_file.rename(final_file)
-
-        print(f"Note saved: {final_file}")
-        return True
-    except Exception as e:
-        print(f"Error processing note: {e}")
-        return False
-
-
-def edit_note(notes_dir, note_id):
-    """Edit an existing note by opening it in the default editor."""
-    # Find the note file
-    notes_subdir = notes_dir / "notes"
-    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
-
-    note_file = None
-    for search_dir in search_dirs:
-        candidate = search_dir / note_id
-        if candidate.exists():
-            note_file = candidate
-            break
-
-    if not note_file:
-        print(f"Error: Note '{note_id}' not found.")
-        return False
-
-    # Open in default editor
-    editor = os.environ.get('EDITOR', 'vi')
-    try:
-        os.system(f"{editor} {note_file}")
-        print(f"Note edited: {note_file}")
-        return True
-    except Exception as e:
-        print(f"Error opening editor: {e}")
-        return False
-
-
-def delete_note(notes_dir, note_id):
-    """Delete an existing note after confirmation."""
-    # Find the note file
-    notes_subdir = notes_dir / "notes"
-    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
-
-    note_file = None
-    for search_dir in search_dirs:
-        candidate = search_dir / note_id
-        if candidate.exists():
-            note_file = candidate
-            break
-
-    if not note_file:
-        print(f"Error: Note '{note_id}' not found.")
-        return False
-
-    # Ask for confirmation
-    confirm = input(f"Are you sure you want to delete '{note_id}'? (y/N): ").strip().lower()
-    if confirm == 'y' or confirm == 'yes':
-        try:
-            note_file.unlink()
-            print(f"Note deleted: {note_id}")
-            return True
-        except Exception as e:
-            print(f"Error deleting note: {e}")
-            return False
-    else:
-        print("Deletion cancelled.")
-        return True
+import mindwriter
 
 
 def list_notes(notes_dir):
@@ -281,7 +50,7 @@ def list_notes(notes_dir):
         print(f"\nNotes in {notes_dir} (Page {current_page} of {total_pages}):")
         print("=" * 60)
         for i, note_file in enumerate(page_notes, start=1):
-            metadata = parse_yaml_header(note_file)
+            metadata = mindwriter.parse_yaml_header(note_file)
             title = metadata.get('title', note_file.name)
             created = metadata.get('created', 'N/A')
             modified = metadata.get('modified', 'N/A')
@@ -311,7 +80,7 @@ def list_notes(notes_dir):
         if prompt == 'q':
             break
         elif prompt == 'c':
-            create_note(notes_dir)
+            mindwriter.create_note(notes_dir)
             run = False
             list_notes(notes_dir)
         elif prompt == 'n':
@@ -335,13 +104,13 @@ def list_notes(notes_dir):
                     while True:
                         action = input(f"Selected: {selected_id}\n(r)ead, (e)dit, (d)elete, (b)ack: ").strip().lower()
                         if action == 'r':
-                            read_note(notes_dir, selected_id)
+                            mindwriter.read_note(notes_dir, selected_id)
                             break
                         elif action == 'e':
-                            edit_note(notes_dir, selected_id)
+                            mindwriter.edit_note(notes_dir, selected_id)
                             break
                         elif action == 'd':
-                            delete_note(notes_dir, selected_id)
+                            mindwriter.delete_note(notes_dir, selected_id)
                             # After delete, refresh the list
                             break
                         elif action == 'b':
@@ -394,22 +163,20 @@ def command_loop(notes_dir):
             # Process commands
             if command == "quit" or command == "q":
                 break
-            elif command == "help":
+            elif command == "help" or command == "h":
                 show_help()
-            elif command == "list":
+            elif command == "list" or command == "l":
                 list_notes(notes_dir)
-            elif command == "read":
+            elif command == "read" or command == "r":
                 note_id = input("note-id> ")
-                read_note(notes_dir, note_id)
-            elif command == "edit":
+                mindwriter.read_note(notes_dir, note_id)
+            elif command == "edit" or command == "e":
                 note_id = input("note-id> ")
-                edit_note(notes_dir, note_id)
-            elif command == "delete":
+                mindwriter.edit_note(notes_dir, note_id)
+            elif command == "delete" or command == "d":
                 note_id = input("note-id> ")
-                delete_note(notes_dir, note_id)
-            elif command == "list":
-                list_notes(notes_dir)
-            elif command == "search":
+                mindwriter.delete_note(notes_dir, note_id)
+            elif command == "search" or command == "s":
                 continue
             else:
                 print(f"Unknown command: '{command}'")
@@ -432,8 +199,10 @@ def finish():
 
 def main():
     """Main entry point for the notes application."""
+    os.system('clear')
     # Setup
-    notes_dir = setup()
+    notes_dir = mindwriter.setup()
+    print("Type 'help' for available commands")
 
     # Command loop
     command_loop(notes_dir)
