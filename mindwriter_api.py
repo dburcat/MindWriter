@@ -838,6 +838,142 @@ def upload_dataset():
 
 
 # ---------------------------------------------------------------------------
+# DELETE /api/datasets/<n>  — delete dataset file + sidecar
+# ---------------------------------------------------------------------------
+
+@app.route("/api/datasets/<int:dataset_id>", methods=["DELETE"])
+def delete_dataset(dataset_id):
+    """Delete a dataset and its sidecar metadata file."""
+    datasets = _collect_datasets(_notes_root())
+    if dataset_id < 1 or dataset_id > len(datasets):
+        abort(404, description=f"Dataset {dataset_id} not found.")
+
+    ds      = datasets[dataset_id - 1]
+    sidecar = ds.parent / (ds.stem + ".dataset.yaml")
+    deleted = []
+
+    try:
+        ds.unlink()
+        deleted.append(ds.name)
+    except Exception as e:
+        abort(500, description=f"Could not delete dataset file: {e}")
+
+    if sidecar.exists():
+        try:
+            sidecar.unlink()
+            deleted.append(sidecar.name)
+        except Exception:
+            pass  # sidecar deletion failure is non-fatal
+
+    return jsonify({"message": "Dataset deleted.", "deleted": deleted})
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/datasets/<n>/reupload  — replace file, keep or update metadata
+# ---------------------------------------------------------------------------
+
+@app.route("/api/datasets/<int:dataset_id>/reupload", methods=["PUT"])
+def reupload_dataset(dataset_id):
+    """
+    Replace an existing dataset file with a new upload.
+    The sidecar is updated with fresh row/column counts and a new 'modified'
+    timestamp; all other metadata fields are preserved unless explicitly
+    overridden via form fields.
+
+    Form fields:
+        file              (required) the replacement .csv or .json file
+        title, description, author, tags, source_url, license, priority
+                          (optional) override specific metadata fields
+    """
+    import csv, json as pyjson, tempfile, shutil
+
+    datasets = _collect_datasets(_notes_root())
+    if dataset_id < 1 or dataset_id > len(datasets):
+        abort(404, description=f"Dataset {dataset_id} not found.")
+
+    ds = datasets[dataset_id - 1]
+
+    if "file" not in request.files:
+        abort(400, description="No file in request. Use field name 'file'.")
+
+    upload = request.files["file"]
+    if not upload.filename:
+        abort(400, description="No file selected.")
+
+    suffix = Path(upload.filename).suffix.lower()
+    if suffix not in (".csv", ".json"):
+        abort(400, description=f"Only .csv and .json files are supported (got '{suffix}').")
+
+    # Save upload to a temp file for introspection
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        upload.save(tmp.name)
+        tmp_path = Path(tmp.name)
+
+    row_count, columns, parse_error = 0, [], None
+    try:
+        if suffix == ".csv":
+            with open(tmp_path, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                columns = list(reader.fieldnames or [])
+                for _ in reader:
+                    row_count += 1
+        else:
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                raw_data = pyjson.load(f)
+            if isinstance(raw_data, list):
+                row_count = len(raw_data)
+                if raw_data and isinstance(raw_data[0], dict):
+                    columns = list(raw_data[0].keys())
+            elif isinstance(raw_data, dict):
+                row_count, columns = 1, list(raw_data.keys())
+    except Exception as e:
+        parse_error = str(e)
+
+    # Load existing sidecar metadata and apply any overrides from form
+    meta = read_dataset_sidecar(ds)
+
+    for field in ("title", "description", "source_url", "license", "priority"):
+        val = request.form.get(field, "").strip()
+        if val:
+            meta[field] = val.lower() if field == "title" else val
+
+    author = request.form.get("author", "").strip()
+    if author:
+        meta["author"] = author.lower()
+
+    tags_raw = request.form.get("tags", "").strip()
+    if tags_raw:
+        meta["tags"] = [t.strip().lower() for t in tags_raw.split(",") if t.strip()]
+
+    # Always update file-derived fields
+    meta["format"]            = suffix.lstrip(".").upper()
+    meta["rows"]              = row_count
+    meta["columns"]           = len(columns)
+    meta["fields"]            = columns
+    meta["modified"]          = datetime.now().isoformat()
+    meta["original_filename"] = upload.filename
+    meta = {k: v for k, v in meta.items() if v != "" and v != [] and v != 0}
+
+    # Replace the data file (keep same path)
+    try:
+        tmp_path.rename(ds)
+    except Exception:
+        shutil.copy2(tmp_path, ds)
+        tmp_path.unlink(missing_ok=True)
+
+    _write_sidecar(ds, meta)
+
+    return jsonify({
+        "message":     "Dataset reuploaded.",
+        "filename":    ds.name,
+        "rows":        row_count,
+        "columns":     len(columns),
+        "parse_error": parse_error,
+    })
+
+
+
+# ---------------------------------------------------------------------------
 # GET /api/datasets/<n>/data  — return full parsed dataset rows
 # ---------------------------------------------------------------------------
 

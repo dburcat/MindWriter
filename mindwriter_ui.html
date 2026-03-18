@@ -200,6 +200,22 @@ aside{width:270px;flex-shrink:0;background:var(--surf);border-right:1px solid va
 .ds-match-info{font-size:11px;color:var(--muted);font-family:var(--mono);padding-bottom:6px;flex-shrink:0}
 .ds-match-info b{color:var(--accent)}
 mark{background:rgba(184,240,80,.28);color:var(--text);border-radius:2px;padding:0 1px}
+
+/* dataset delete / reupload */
+.ds-row-actions{display:none;gap:4px;margin-left:auto;flex-shrink:0}
+.ds-row:hover .ds-row-actions{display:flex}
+.ds-row-head{display:flex;align-items:center;gap:6px}
+.ds-icon-btn{background:none;border:1px solid var(--border);color:var(--muted);font-size:10px;padding:2px 6px;border-radius:3px;cursor:pointer;transition:color .12s,border-color .12s;line-height:1.4}
+.ds-icon-btn:hover{color:var(--text);border-color:var(--accent)}
+.ds-icon-btn.del:hover{color:var(--danger);border-color:var(--danger)}
+.ds-action-bar{display:flex;gap:8px;padding-top:4px;flex-wrap:wrap}
+.reupload-drop{border:2px dashed var(--border);border-radius:var(--r);padding:18px 14px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;position:relative;margin-top:4px}
+.reupload-drop:hover,.reupload-drop.drag{border-color:var(--accent);background:rgba(184,240,80,.04)}
+.reupload-drop input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.reupload-drop .rdz-label{font-size:11px;color:var(--muted)}
+.reupload-drop .rdz-chosen{font-size:11px;color:var(--text);font-family:var(--mono);margin-top:4px;display:none}
+#reupload-panel{display:none;flex-direction:column;gap:10px;background:var(--surf2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-top:8px}
+#reupload-panel .rp-hd{font-family:var(--mono);font-size:11px;color:var(--blue);letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px}
 /* shared */
 .msg{color:var(--muted);font-family:var(--mono);font-size:12px;padding:40px;text-align:center}
 .err{color:var(--danger)}
@@ -671,13 +687,26 @@ async function loadDatasets(force=false) {
       return;
     }
     listEl.innerHTML = d.datasets.map(ds => `
-      <div class="ds-row" data-id="${ds.id}">
-        <div class="ds-row-name">${esc(ds.title||ds.filename)}</div>
-        <div class="ds-row-meta">${esc(ds.format)} ${ds.rows ? '· ' + ds.rows + ' rows' : ''}</div>
+      <div class="ds-row" data-id="${ds.id}" data-filename="${esc(ds.filename)}">
+        <div class="ds-row-head">
+          <div style="flex:1;min-width:0">
+            <div class="ds-row-name">${esc(ds.title||ds.filename)}</div>
+            <div class="ds-row-meta">${esc(ds.format)} ${ds.rows ? '· ' + ds.rows + ' rows' : ''}</div>
+          </div>
+          <div class="ds-row-actions">
+            <button class="ds-icon-btn reup-btn" title="Reupload">⟳</button>
+            <button class="ds-icon-btn del  del-ds-btn" title="Delete">✕</button>
+          </div>
+        </div>
       </div>`).join('');
-    listEl.querySelectorAll('.ds-row').forEach(row =>
-      row.addEventListener('click', () => openDataset(+row.dataset.id))
-    );
+    listEl.querySelectorAll('.ds-row').forEach(row => {
+      row.addEventListener('click', e => {
+        if (e.target.closest('.ds-row-actions')) return;
+        openDataset(+row.dataset.id);
+      });
+      row.querySelector('.reup-btn' ).addEventListener('click', e => { e.stopPropagation(); openReupload(+row.dataset.id); });
+      row.querySelector('.del-ds-btn').addEventListener('click', e => { e.stopPropagation(); confirmDsDelete(+row.dataset.id, row.dataset.filename); });
+    });
   } catch(e) {
     listEl.innerHTML = `<div class="msg err" style="padding:16px">${esc(e.message)}</div>`;
   }
@@ -727,6 +756,23 @@ function renderDatasetMeta(id) {
           </div>
           ${fields ? '<div style="margin-top:8px;font-size:11px;color:var(--muted)">' + metaLabel('fields') + ' ' + esc(fields) + '</div>' : ''}
           ${tagsHtml(ds.tags)}
+          <div class="ds-action-bar" style="margin-top:12px">
+            <button class="btn-ghost" id="info-reup-btn" style="font-size:11px;padding:5px 11px">⟳ Reupload</button>
+            <button class="btn-danger" id="info-del-btn" style="font-size:11px;padding:5px 11px">✕ Delete</button>
+          </div>
+          <div id="reupload-panel">
+            <div class="rp-hd">Replace File</div>
+            <div class="reupload-drop" id="reup-drop">
+              <input type="file" id="reup-file-input" accept=".csv,.json"/>
+              <div class="rdz-label">Drop replacement <b>.csv</b> / <b>.json</b> or click to browse</div>
+              <div class="rdz-chosen" id="reup-chosen"></div>
+            </div>
+            <div class="f-actions" style="padding-top:0">
+              <button class="btn"       id="reup-submit">Replace</button>
+              <button class="btn-ghost" id="reup-cancel-btn">Cancel</button>
+            </div>
+            <div class="f-msg" id="reup-msg"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -740,6 +786,10 @@ function renderDatasetMeta(id) {
     document.getElementById('ds-panel-meta').style.display = '';
     document.getElementById('ds-panel-data').style.display = 'none';
   });
+
+  // Action buttons wired after renderDatasetMeta
+  document.getElementById('info-reup-btn').addEventListener('click', () => openReupload(id));
+  document.getElementById('info-del-btn' ).addEventListener('click', () => confirmDsDelete(id, ds.filename));
 
   document.getElementById('tab-data').addEventListener('click', () => {
     document.getElementById('tab-data').classList.add('active');
@@ -854,6 +904,112 @@ async function loadDatasetPage(id, page, query) {
   } catch(e) {
     tableArea.innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
   }
+}
+
+
+// ── dataset delete ────────────────────────────────────────────────────────
+let pendingDsDeleteId  = null;
+let pendingDsDeleteName = null;
+
+function confirmDsDelete(id, filename) {
+  pendingDsDeleteId   = id;
+  pendingDsDeleteName = filename;
+  document.getElementById('confirm-msg').textContent =
+    `Delete dataset "${filename}" and its sidecar? This cannot be undone.`;
+  document.getElementById('confirm-modal').classList.add('on');
+  // Re-wire confirm button for dataset deletion
+  const okBtn = document.getElementById('confirm-ok');
+  okBtn.onclick = async () => {
+    document.getElementById('confirm-modal').classList.remove('on');
+    try {
+      await apiFetch(`/api/datasets/${pendingDsDeleteId}`, { method: 'DELETE' });
+      if (dsCurrentId === pendingDsDeleteId) {
+        dsCurrentId = null;
+        document.getElementById('ds-content').innerHTML =
+          '<div class="empty-pane"><div class="big">◎</div><div>Dataset deleted.</div></div>';
+      }
+      datasetsLoaded = false;
+      await loadDatasets(true);
+    } catch(e) { alert('Delete failed: ' + e.message); }
+    pendingDsDeleteId = pendingDsDeleteName = null;
+  };
+}
+
+// ── dataset reupload ──────────────────────────────────────────────────────
+function openReupload(id) {
+  // Make sure we are on the Info tab
+  const metaTab  = document.getElementById('tab-meta');
+  const dataTab  = document.getElementById('tab-data');
+  const metaPane = document.getElementById('ds-panel-meta');
+  const dataPane = document.getElementById('ds-panel-data');
+  if (metaTab && dataTab) {
+    metaTab.classList.add('active'); dataTab.classList.remove('active');
+    metaPane.style.display = ''; dataPane.style.display = 'none';
+  }
+
+  const panel   = document.getElementById('reupload-panel');
+  const drop    = document.getElementById('reup-drop');
+  const input   = document.getElementById('reup-file-input');
+  const chosen  = document.getElementById('reup-chosen');
+  const msgEl   = document.getElementById('reup-msg');
+  if (!panel) return;
+
+  panel.style.display = 'flex';
+  msgEl.style.display = 'none';
+
+  // File pick / drag-drop
+  input.addEventListener('change', () => {
+    const f = input.files[0];
+    if (f) { chosen.textContent = f.name; chosen.style.display = 'block'; }
+  });
+  drop.addEventListener('dragover',  e => { e.preventDefault(); drop.classList.add('drag'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('drag');
+    const f = e.dataTransfer.files[0];
+    if (f) { input._dropped = f; chosen.textContent = f.name; chosen.style.display = 'block'; }
+  });
+
+  document.getElementById('reup-cancel-btn').onclick = () => {
+    panel.style.display = 'none';
+    input.value = ''; input._dropped = null;
+    chosen.style.display = 'none';
+  };
+
+  document.getElementById('reup-submit').onclick = async () => {
+    const file = input._dropped || input.files[0];
+    if (!file) { msgEl.textContent='Select a file first.'; msgEl.className='f-msg err'; msgEl.style.display='block'; return; }
+    const suffix = file.name.split('.').pop().toLowerCase();
+    if (!['csv','json'].includes(suffix)) {
+      msgEl.textContent='Only .csv and .json supported.'; msgEl.className='f-msg err'; msgEl.style.display='block'; return;
+    }
+
+    const submitBtn = document.getElementById('reup-submit');
+    submitBtn.disabled = true; submitBtn.textContent = 'Replacing…';
+    msgEl.style.display = 'none';
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res  = await fetch(api() + `/api/datasets/${id}/reupload`, { method: 'PUT', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+
+      msgEl.textContent = `Replaced: ${data.filename} (${data.rows} rows)`;
+      msgEl.className = 'f-msg ok'; msgEl.style.display = 'block';
+      panel.style.display = 'none';
+      input.value = ''; input._dropped = null; chosen.style.display = 'none';
+
+      datasetsLoaded = false;
+      await loadDatasets(true);
+      const updated = allDatasets.find(d => d.filename === data.filename);
+      if (updated) openDataset(updated.id);
+    } catch(e) {
+      msgEl.textContent = e.message; msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+    } finally {
+      submitBtn.disabled = false; submitBtn.textContent = 'Replace';
+    }
+  };
 }
 
 // ── upload form ───────────────────────────────────────────────────────────
