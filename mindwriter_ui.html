@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MindWriter</title>
+<style>
+:root {
+  --bg:#0c0c0f;--surf:#121218;--surf2:#18181f;--border:#222230;
+  --accent:#b8f050;--blue:#50c8f0;--muted:#50506a;--text:#d8d8e8;
+  --dim:#8888a0;--danger:#f05858;--r:5px;
+  --mono:"JetBrains Mono","Fira Mono",ui-monospace,monospace;
+  --sans:"DM Sans","Segoe UI",system-ui,sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:var(--sans);font-size:13px;color:var(--text);background:var(--bg);display:flex;flex-direction:column}
+
+/* header */
+header{display:flex;align-items:center;gap:10px;padding:0 18px;height:46px;flex-shrink:0;background:var(--surf);border-bottom:1px solid var(--border)}
+.logo{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.08em;white-space:nowrap}
+nav{display:flex;gap:2px}
+nav button{background:none;border:none;color:var(--muted);font:inherit;font-size:12px;padding:5px 11px;border-radius:var(--r);cursor:pointer;transition:color .12s,background .12s}
+nav button:hover{color:var(--text);background:var(--surf2)}
+nav button.active{color:var(--accent);background:rgba(184,240,80,.07)}
+.api-row{margin-left:auto;display:flex;align-items:center;gap:7px}
+.api-row label{font-size:11px;color:var(--muted)}
+#api-input{font-family:var(--mono);font-size:11px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:var(--r);width:200px;outline:none}
+#api-input:focus{border-color:var(--accent)}
+#api-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);transition:background .3s;flex-shrink:0}
+#api-dot.ok{background:var(--accent)}
+#api-dot.err{background:var(--danger)}
+
+/* banner */
+#no-api-banner{display:none;background:#1a0e0e;border:1px solid #3e2020;border-radius:var(--r);padding:10px 14px;margin:10px 10px 0;font-size:12px;color:#d88888;line-height:1.7}
+#no-api-banner b{color:var(--danger)}
+#no-api-banner code{font-family:var(--mono);font-size:11px;background:#2a1010;padding:1px 5px;border-radius:3px}
+
+/* layout */
+.shell{flex:1;display:flex;overflow:hidden}
+
+/* sidebar */
+aside{width:270px;flex-shrink:0;background:var(--surf);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.aside-head{padding:10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px}
+.aside-head input,.aside-head select{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font:inherit;font-size:12px;padding:6px 9px;border-radius:var(--r);outline:none}
+.aside-head input:focus,.aside-head select:focus{border-color:var(--accent)}
+.btn-new{width:100%;background:var(--accent);color:#0c0c0f;border:none;font:inherit;font-weight:700;font-size:12px;padding:7px;border-radius:var(--r);cursor:pointer;transition:opacity .12s}
+.btn-new:hover{opacity:.85}
+#note-list{flex:1;overflow-y:auto}
+.note-row{padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s;user-select:none;position:relative}
+.note-row:hover{background:var(--surf2)}
+.note-row.sel{background:rgba(184,240,80,.05);border-left:2px solid var(--accent);padding-left:12px}
+.nr-id{font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:2px}
+.nr-title{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:capitalize;margin-bottom:3px;padding-right:44px}
+.nr-meta{font-size:10px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+.nr-actions{position:absolute;top:50%;right:10px;transform:translateY(-50%);display:none;gap:4px}
+.note-row:hover .nr-actions{display:flex}
+.icon-btn{background:none;border:1px solid var(--border);color:var(--muted);font-size:11px;padding:3px 6px;border-radius:3px;cursor:pointer;transition:color .12s,border-color .12s}
+.icon-btn:hover{color:var(--text);border-color:var(--accent)}
+.icon-btn.del:hover{color:var(--danger);border-color:var(--danger)}
+
+/* content */
+.content{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.view{display:none;flex:1;overflow:hidden;flex-direction:column}
+.view.on{display:flex}
+#view-notes{flex-direction:row}
+
+/* note reader */
+#note-reader{flex:1;overflow-y:auto;padding:28px 32px;display:flex;flex-direction:column;gap:16px}
+.empty-pane{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--muted);font-family:var(--mono);font-size:12px}
+.empty-pane .big{font-size:28px}
+.reader-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.reader-title{font-size:20px;font-weight:700;color:var(--text);text-transform:capitalize;line-height:1.3;flex:1}
+.reader-btns{display:flex;gap:6px;flex-shrink:0}
+.reader-meta{display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:var(--dim);padding-bottom:14px;border-bottom:1px solid var(--border)}
+.reader-meta span b{color:var(--blue);font-family:var(--mono);font-size:10px;font-weight:400;margin-right:3px}
+.tags{display:flex;flex-wrap:wrap;gap:4px}
+.tag{background:#1a2a10;color:var(--accent);font-size:10px;font-family:var(--mono);padding:2px 7px;border-radius:3px;border:1px solid #2a3e18}
+.pri{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:3px}
+.pri.high{background:#2a1010;color:var(--danger);border:1px solid #3e2020}
+.pri.medium,.pri.med{background:#2a2510;color:#f0c850;border:1px solid #3e3820}
+.pri.low{background:#102028;color:var(--blue);border:1px solid #183038}
+.pri.num{background:#141428;color:var(--accent);border:1px solid #202040}
+.note-body{font-family:var(--mono);font-size:12px;line-height:1.85;color:#b8b8cc;white-space:pre-wrap;word-break:break-word;flex:1}
+
+/* note form (create + edit) */
+#note-form-panel{display:none;flex:1;overflow-y:auto;padding:28px 32px;flex-direction:column;gap:14px}
+.form-hd{font-size:16px;font-weight:700;color:var(--accent);font-family:var(--mono);margin-bottom:2px}
+.f-row{display:flex;flex-direction:column;gap:5px}
+.f-row label{font-size:10px;color:var(--blue);font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase}
+.f-row input,.f-row textarea{background:var(--surf2);border:1px solid var(--border);color:var(--text);font:inherit;font-size:13px;padding:8px 11px;border-radius:var(--r);outline:none;transition:border-color .12s;resize:vertical}
+.f-row input:focus,.f-row textarea:focus{border-color:var(--accent)}
+.f-row textarea{font-family:var(--mono);font-size:12px;line-height:1.75;min-height:280px}
+.f-row-2{display:flex;gap:10px}
+.f-row-2 .f-row{flex:1}
+.f-actions{display:flex;gap:8px;padding-top:4px}
+.btn{background:var(--accent);color:#0c0c0f;border:none;font:inherit;font-weight:700;font-size:12px;padding:8px 16px;border-radius:var(--r);cursor:pointer;transition:opacity .12s}
+.btn:hover{opacity:.85}
+.btn-ghost{background:none;border:1px solid var(--border);color:var(--dim);font:inherit;font-size:12px;padding:8px 14px;border-radius:var(--r);cursor:pointer;transition:border-color .12s,color .12s}
+.btn-ghost:hover{border-color:var(--text);color:var(--text)}
+.btn-danger{background:none;border:1px solid var(--danger);color:var(--danger);font:inherit;font-size:12px;padding:8px 14px;border-radius:var(--r);cursor:pointer;transition:opacity .12s}
+.btn-danger:hover{opacity:.75}
+.f-msg{font-family:var(--mono);font-size:12px;padding:7px 11px;border-radius:var(--r);display:none;margin-top:4px}
+.f-msg.ok{background:#162010;color:var(--accent);border:1px solid #2a3e18}
+.f-msg.err{background:#1a0e0e;color:var(--danger);border:1px solid #3e2020}
+
+/* confirm modal */
+#confirm-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
+#confirm-modal.on{display:flex}
+.modal-box{background:var(--surf);border:1px solid var(--border);border-radius:var(--r);padding:24px;max-width:360px;width:90%;display:flex;flex-direction:column;gap:14px}
+.modal-box h3{font-size:15px;font-weight:700}
+.modal-box p{font-size:13px;color:var(--dim);line-height:1.5}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end}
+
+/* search */
+#view-search{padding:20px 24px;overflow-y:auto;gap:0}
+.search-bar{display:flex;gap:8px;margin-bottom:18px}
+.search-bar input{flex:1;background:var(--surf);border:1px solid var(--border);color:var(--text);font:inherit;font-size:13px;padding:8px 12px;border-radius:var(--r);outline:none}
+.search-bar input:focus{border-color:var(--accent)}
+.result-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:border-color .12s}
+.result-card:hover{border-color:var(--accent)}
+.rc-title{font-size:13px;font-weight:600;text-transform:capitalize;margin-bottom:6px}
+.rc-matches{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px}
+.kw-badge{background:#102018;color:var(--accent);font-family:var(--mono);font-size:10px;padding:2px 6px;border-radius:3px;border:1px solid #1a3028}
+.rc-meta{font-size:11px;color:var(--muted)}
+
+/* stats */
+#view-stats{padding:20px 24px;overflow-y:auto;gap:20px}
+.stat-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:20px}
+.stat-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.stat-val{font-family:var(--mono);font-size:26px;font-weight:700;color:var(--accent);line-height:1;margin-bottom:4px}
+.stat-lbl{font-size:11px;color:var(--muted)}
+.section{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
+.section-hd{font-family:var(--mono);font-size:10px;color:var(--blue);letter-spacing:.1em;text-transform:uppercase;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.bar-row{display:grid;grid-template-columns:130px 36px 1fr;gap:8px;align-items:center;font-size:12px}
+.bar-name{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-cnt{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right}
+.bar-track{height:5px;background:var(--border);border-radius:3px}
+.bar-fill{height:5px;background:var(--accent);border-radius:3px;transition:width .4s ease}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+
+/* datasets */
+#view-datasets{display:none;flex:1;overflow:hidden;flex-direction:column}
+#view-datasets.on{display:flex}
+.ds-layout{display:flex;flex:1;overflow:hidden}
+.ds-sidebar{width:280px;flex-shrink:0;border-right:1px solid var(--border);background:var(--surf);display:flex;flex-direction:column;overflow:hidden}
+.ds-sidebar-head{padding:10px;border-bottom:1px solid var(--border)}
+.ds-list{flex:1;overflow-y:auto}
+.ds-row{padding:11px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s}
+.ds-row:hover{background:var(--surf2)}
+.ds-row.sel{background:rgba(80,200,240,.05);border-left:2px solid var(--blue);padding-left:12px}
+.ds-row-name{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:capitalize;margin-bottom:2px}
+.ds-row-meta{font-size:10px;color:var(--muted)}
+.ds-content{flex:1;overflow-y:auto;padding:24px 28px;display:flex;flex-direction:column;gap:16px}
+.ds-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;display:flex;gap:14px}
+.ds-fmt{font-family:var(--mono);font-size:10px;font-weight:700;padding:4px 8px;border-radius:3px;background:#141428;color:var(--blue);border:1px solid var(--border);flex-shrink:0;align-self:flex-start}
+.ds-title{font-size:15px;font-weight:700;text-transform:capitalize;margin-bottom:4px}
+.ds-desc{font-size:12px;color:var(--dim);margin-bottom:6px;line-height:1.5}
+.ds-meta{font-size:11px;color:var(--muted);line-height:1.7}
+/* upload form */
+.up-form{display:flex;flex-direction:column;gap:14px}
+.up-hd{font-size:15px;font-weight:700;color:var(--accent);font-family:var(--mono)}
+.drop-zone{border:2px dashed var(--border);border-radius:var(--r);padding:32px 20px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;position:relative}
+.drop-zone:hover,.drop-zone.drag{border-color:var(--accent);background:rgba(184,240,80,.04)}
+.drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.drop-zone .dz-icon{font-size:26px;margin-bottom:8px;color:var(--muted)}
+.drop-zone .dz-label{font-size:12px;color:var(--muted)}
+.drop-zone .dz-label b{color:var(--accent)}
+.drop-zone .dz-chosen{font-size:12px;color:var(--text);font-family:var(--mono);margin-top:6px;display:none}
+.up-preview{background:var(--surf2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;font-family:var(--mono);font-size:11px;color:var(--dim);display:none}
+.up-progress{height:4px;background:var(--border);border-radius:2px;overflow:hidden;display:none}
+.up-progress-bar{height:100%;background:var(--accent);width:0%;transition:width .3s}
+
+
+/* dataset data table */
+.ds-tabs{display:flex;gap:2px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:0}
+.ds-tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font:inherit;font-size:12px;padding:6px 14px;cursor:pointer;transition:color .12s,border-color .12s;margin-bottom:-1px}
+.ds-tab:hover{color:var(--text)}
+.ds-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.ds-table-wrap{overflow:auto;flex:1;border:1px solid var(--border);border-radius:var(--r)}
+.ds-table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:11px;white-space:nowrap}
+.ds-table th{background:var(--surf2);color:var(--blue);font-weight:600;padding:7px 12px;border-bottom:1px solid var(--border);position:sticky;top:0;text-align:left;letter-spacing:.04em}
+.ds-table td{padding:5px 12px;border-bottom:1px solid var(--border);color:var(--text);max-width:280px;overflow:hidden;text-overflow:ellipsis}
+.ds-table tr:hover td{background:var(--surf2)}
+.ds-table tr:last-child td{border-bottom:none}
+.ds-pagination{display:flex;align-items:center;gap:8px;padding-top:10px;font-size:12px;color:var(--muted);flex-shrink:0}
+.ds-pagination button{background:var(--surf2);border:1px solid var(--border);color:var(--text);font:inherit;font-size:11px;padding:4px 10px;border-radius:var(--r);cursor:pointer;transition:border-color .12s}
+.ds-pagination button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.ds-pagination button:disabled{opacity:.35;cursor:default}
+.ds-pagination .pg-info{font-family:var(--mono)}
+
+/* dataset search bar */
+.ds-search-bar{display:flex;gap:6px;padding:0 0 10px 0;flex-shrink:0}
+.ds-search-bar input{flex:1;background:var(--surf2);border:1px solid var(--border);color:var(--text);font:inherit;font-size:12px;padding:6px 10px;border-radius:var(--r);outline:none;font-family:var(--mono)}
+.ds-search-bar input:focus{border-color:var(--accent)}
+.ds-search-bar button{background:var(--accent);color:#0c0c0f;border:none;font:inherit;font-weight:700;font-size:11px;padding:6px 12px;border-radius:var(--r);cursor:pointer;transition:opacity .12s}
+.ds-search-bar button:hover{opacity:.85}
+.ds-search-bar .clr-btn{background:none;border:1px solid var(--border);color:var(--muted);font:inherit;font-size:11px;padding:6px 10px;border-radius:var(--r);cursor:pointer;transition:border-color .12s,color .12s}
+.ds-search-bar .clr-btn:hover{border-color:var(--danger);color:var(--danger)}
+.ds-match-info{font-size:11px;color:var(--muted);font-family:var(--mono);padding-bottom:6px;flex-shrink:0}
+.ds-match-info b{color:var(--accent)}
+mark{background:rgba(184,240,80,.28);color:var(--text);border-radius:2px;padding:0 1px}
+/* shared */
+.msg{color:var(--muted);font-family:var(--mono);font-size:12px;padding:40px;text-align:center}
+.err{color:var(--danger)}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">✦ mindwriter</span>
+  <nav>
+    <button class="active" data-tab="notes">Notes</button>
+    <button data-tab="search">Search</button>
+    <button data-tab="stats">Stats</button>
+    <button data-tab="datasets">Datasets</button>
+  </nav>
+  <div class="api-row">
+    <label for="api-input">API</label>
+    <input id="api-input" value="http://localhost:8000" spellcheck="false"/>
+    <div id="api-dot"></div>
+  </div>
+</header>
+
+<div id="no-api-banner">
+  <b>API not reachable</b> — start the backend first:<br>
+  <code>pip install flask flask-cors</code>&nbsp; then &nbsp;<code>python3 mindwriter_api.py</code><br>
+  Notes are served from <code>~/.notes/notes/</code>
+</div>
+
+<!-- delete confirm modal -->
+<div id="confirm-modal">
+  <div class="modal-box">
+    <h3>Delete note?</h3>
+    <p id="confirm-msg">This cannot be undone.</p>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="confirm-cancel">Cancel</button>
+      <button class="btn-danger" id="confirm-ok">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div class="shell">
+
+  <!-- sidebar -->
+  <aside id="aside-notes">
+    <div class="aside-head">
+      <button class="btn-new" id="btn-new-note">+ New Note</button>
+      <input id="filter-tag"    placeholder="Filter by tag…"/>
+      <input id="filter-author" placeholder="Filter by author…"/>
+      <select id="sort-by">
+        <option value="id">Sort: index</option>
+        <option value="title">Sort: title</option>
+        <option value="modified">Sort: modified</option>
+        <option value="created">Sort: created</option>
+      </select>
+    </div>
+    <div id="note-list"><div class="msg">Loading…</div></div>
+  </aside>
+
+  <div class="content">
+
+    <!-- Notes view -->
+    <div id="view-notes" class="view on">
+
+      <!-- reader -->
+      <div id="note-reader">
+        <div class="empty-pane"><div class="big">◎</div><div>Select a note or create a new one</div></div>
+      </div>
+
+      <!-- create / edit form -->
+      <div id="note-form-panel">
+        <div class="form-hd" id="form-hd-title">+ New Note</div>
+        <div class="f-row">
+          <label>Title *</label>
+          <input id="f-title" type="text" placeholder="Note title…"/>
+        </div>
+        <div class="f-row">
+          <label>Body</label>
+          <textarea id="f-body" placeholder="Write your note here…"></textarea>
+        </div>
+        <div class="f-row-2">
+          <div class="f-row">
+            <label>Author</label>
+            <input id="f-author" type="text" placeholder="your name"/>
+          </div>
+          <div class="f-row">
+            <label>Priority</label>
+            <input id="f-priority" type="text" placeholder="high / low / 1"/>
+          </div>
+        </div>
+        <div class="f-row">
+          <label>Tags</label>
+          <input id="f-tags" type="text" placeholder="python, flask, notes"/>
+        </div>
+        <div class="f-actions">
+          <button class="btn"       id="f-submit">Save Note</button>
+          <button class="btn-ghost" id="f-cancel">Cancel</button>
+        </div>
+        <div class="f-msg" id="f-msg"></div>
+      </div>
+
+    </div>
+
+    <!-- Search -->
+    <div id="view-search" class="view">
+      <div class="search-bar">
+        <input id="search-input" placeholder="Keywords separated by spaces…"/>
+        <button class="btn" id="btn-search">Search</button>
+      </div>
+      <div id="search-results"></div>
+    </div>
+
+    <!-- Stats -->
+    <div id="view-stats" class="view">
+      <div class="msg">Switch to this tab to load stats.</div>
+    </div>
+
+    <!-- Datasets -->
+    <div id="view-datasets" class="view">
+      <div class="ds-layout">
+
+        <!-- left: dataset list -->
+        <div class="ds-sidebar">
+          <div class="ds-sidebar-head">
+            <button class="btn-new" id="btn-upload-dataset" style="width:100%">+ Upload Dataset</button>
+          </div>
+          <div id="ds-list"><div class="msg" style="padding:20px">Loading…</div></div>
+        </div>
+
+        <!-- right: detail / upload form -->
+        <div class="ds-content" id="ds-content">
+          <div class="empty-pane"><div class="big">◎</div><div>Select a dataset or upload a new one</div></div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── api ───────────────────────────────────────────────────────────────────
+const apiInput = document.getElementById('api-input');
+const apiDot   = document.getElementById('api-dot');
+const banner   = document.getElementById('no-api-banner');
+const api = () => apiInput.value.replace(/\/$/, '');
+
+async function apiFetch(path, opts={}) {
+  const res = await fetch(api() + path, opts);
+  if (!res.ok) { const j = await res.json().catch(()=>({})); throw new Error(j.error || res.statusText); }
+  return res.json();
+}
+
+async function checkHealth() {
+  try { await apiFetch('/health'); apiDot.className='ok'; banner.style.display='none'; }
+  catch { apiDot.className='err'; banner.style.display='block'; }
+}
+apiInput.addEventListener('change', () => { statsLoaded=false; datasetsLoaded=false; checkHealth(); loadNotes(); });
+
+// ── nav ───────────────────────────────────────────────────────────────────
+document.querySelectorAll('nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    document.getElementById('view-'+tab).classList.add('on');
+    document.getElementById('aside-notes').style.display = tab==='notes' ? 'flex' : 'none';
+    if (tab==='stats')    loadStats();
+    if (tab==='datasets') loadDatasets();
+  });
+});
+
+// ── helpers ───────────────────────────────────────────────────────────────
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const tagsHtml = tags => tags&&tags.length ? `<div class="tags">${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>` : '';
+const priBadge = p => { if(!p) return ''; const c=/^\d+$/.test(p)?'num':p.toLowerCase(); return `<span class="pri ${c}">${esc(p)}</span>`; };
+
+// ── note list ─────────────────────────────────────────────────────────────
+const noteList   = document.getElementById('note-list');
+const noteReader = document.getElementById('note-reader');
+const formPanel  = document.getElementById('note-form-panel');
+let   activeNote = null; // {id, filename, ...}
+
+function showReader()  { noteReader.style.display='flex'; formPanel.style.display='none'; }
+function showForm()    { noteReader.style.display='none'; formPanel.style.display='flex'; }
+function clearForm()   { ['f-title','f-body','f-author','f-priority','f-tags'].forEach(id=>document.getElementById(id).value=''); showMsg('',''); }
+
+function showMsg(text, type) {
+  const el = document.getElementById('f-msg');
+  el.textContent = text;
+  el.className   = 'f-msg' + (type ? ' '+type : '');
+  el.style.display = text ? 'block' : 'none';
+}
+
+async function loadNotes() {
+  noteList.innerHTML = '<div class="msg">Loading…</div>';
+  const tag    = document.getElementById('filter-tag').value.trim();
+  const author = document.getElementById('filter-author').value.trim();
+  const sort   = document.getElementById('sort-by').value;
+  let qs = `?sort=${sort}`;
+  if (tag)    qs += `&tag=${encodeURIComponent(tag)}`;
+  if (author) qs += `&author=${encodeURIComponent(author)}`;
+  try {
+    const d = await apiFetch('/api/notes' + qs);
+    if (!d.notes.length) {
+      noteList.innerHTML = `<div class="msg">No notes found.<br><br>Click <b style="color:var(--accent)">+ New Note</b> to create one.</div>`;
+      return;
+    }
+    noteList.innerHTML = d.notes.map(n => `
+      <div class="note-row" data-id="${n.id}" data-filename="${esc(n.filename)}">
+        <div class="nr-id">#${n.id}</div>
+        <div class="nr-title">${esc(n.title||n.filename)}</div>
+        <div class="nr-meta">
+          ${n.author   ? `<span>${esc(n.author)}</span>`          : ''}
+          ${n.modified ? `<span>${n.modified.slice(0,10)}</span>` : ''}
+          ${n.priority ? `<span>${esc(n.priority)}</span>`        : ''}
+        </div>
+        <div class="nr-actions">
+          <button class="icon-btn edit-btn" title="Edit">✎</button>
+          <button class="icon-btn del  del-btn"  title="Delete">✕</button>
+        </div>
+      </div>`).join('');
+
+    noteList.querySelectorAll('.note-row').forEach(row => {
+      row.addEventListener('click', e => {
+        if (e.target.closest('.nr-actions')) return;
+        openNote(+row.dataset.id);
+      });
+      row.querySelector('.edit-btn').addEventListener('click', e => { e.stopPropagation(); openEditForm(+row.dataset.id); });
+      row.querySelector('.del-btn' ).addEventListener('click', e => { e.stopPropagation(); confirmDelete(+row.dataset.id, row.dataset.filename); });
+    });
+
+    // Re-select active note in list if still present
+    if (activeNote) {
+      const sel = noteList.querySelector(`.note-row[data-id="${activeNote.id}"]`);
+      if (sel) sel.classList.add('sel');
+    }
+  } catch(e) {
+    noteList.innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
+    apiDot.className='err'; banner.style.display='block';
+  }
+}
+
+async function openNote(id) {
+  document.querySelectorAll('.note-row').forEach(r=>r.classList.toggle('sel',+r.dataset.id===id));
+  showReader();
+  noteReader.innerHTML = '<div class="msg">Loading…</div>';
+  try {
+    const n = await apiFetch(`/api/notes/${id}`);
+    activeNote = n;
+    const meta = [];
+    if (n.author)   meta.push(`<span><b>author</b>${esc(n.author)}</span>`);
+    if (n.created)  meta.push(`<span><b>created</b>${n.created.slice(0,10)}</span>`);
+    if (n.modified) meta.push(`<span><b>modified</b>${n.modified.slice(0,10)}</span>`);
+    if (n.priority) meta.push(priBadge(n.priority));
+    if (n.tags&&n.tags.length) meta.push(tagsHtml(n.tags));
+    noteReader.innerHTML = `
+      <div class="reader-header">
+        <div class="reader-title">${esc(n.title||n.filename)}</div>
+        <div class="reader-btns">
+          <button class="btn-ghost" id="reader-edit-btn" style="font-size:11px;padding:5px 10px">✎ Edit</button>
+          <button class="btn-danger" id="reader-del-btn" style="font-size:11px;padding:5px 10px">✕ Delete</button>
+        </div>
+      </div>
+      <div class="reader-meta">${meta.join('')}</div>
+      <pre class="note-body">${esc(n.body||'(empty)')}</pre>`;
+    document.getElementById('reader-edit-btn').addEventListener('click', () => openEditForm(n.id));
+    document.getElementById('reader-del-btn' ).addEventListener('click', () => confirmDelete(n.id, n.filename));
+  } catch(e) { noteReader.innerHTML=`<div class="msg err">${esc(e.message)}</div>`; }
+}
+
+['filter-tag','filter-author'].forEach(id => document.getElementById(id).addEventListener('keydown', e => e.key==='Enter'&&loadNotes()));
+document.getElementById('sort-by').addEventListener('change', loadNotes);
+
+// ── new note ──────────────────────────────────────────────────────────────
+let formMode = 'create'; // 'create' | 'edit'
+let editId   = null;
+
+document.getElementById('btn-new-note').addEventListener('click', () => {
+  formMode = 'create';
+  editId   = null;
+  clearForm();
+  document.getElementById('form-hd-title').textContent = '+ New Note';
+  document.getElementById('f-submit').textContent = 'Save Note';
+  document.querySelectorAll('.note-row').forEach(r=>r.classList.remove('sel'));
+  showForm();
+  document.getElementById('f-title').focus();
+});
+
+document.getElementById('f-cancel').addEventListener('click', () => {
+  clearForm();
+  showReader();
+  if (activeNote) openNote(activeNote.id);
+});
+
+document.getElementById('f-submit').addEventListener('click', async () => {
+  const title    = document.getElementById('f-title').value.trim();
+  const body     = document.getElementById('f-body').value;
+  const author   = document.getElementById('f-author').value.trim();
+  const priority = document.getElementById('f-priority').value.trim();
+  const tags     = document.getElementById('f-tags').value.trim();
+  const submitBtn = document.getElementById('f-submit');
+
+  if (!title) { showMsg('Title is required.', 'err'); document.getElementById('f-title').focus(); return; }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Saving…';
+  showMsg('', '');
+
+  try {
+    if (formMode === 'create') {
+      const res = await apiFetch('/api/notes', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({title, body, author, priority, tags}),
+      });
+      showMsg(`Note created: ${res.filename}`, 'ok');
+      activeNote = {id: res.id, filename: res.filename, title: res.title};
+      clearForm();
+      await loadNotes();
+      setTimeout(() => { showReader(); openNote(res.id); }, 600);
+    } else {
+      const res = await apiFetch(`/api/notes/${editId}`, {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({title, body, author, priority, tags}),
+      });
+      showMsg('Note updated.', 'ok');
+      await loadNotes();
+      setTimeout(() => { showReader(); openNote(editId); }, 600);
+    }
+  } catch(e) {
+    showMsg(e.message, 'err');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = formMode === 'create' ? 'Save Note' : 'Update Note';
+  }
+});
+
+// ── edit note ─────────────────────────────────────────────────────────────
+async function openEditForm(id) {
+  formMode = 'edit';
+  editId   = id;
+  document.getElementById('form-hd-title').textContent = '✎ Edit Note';
+  document.getElementById('f-submit').textContent = 'Update Note';
+  showMsg('', '');
+  showForm();
+  document.getElementById('f-title').value = 'Loading…';
+
+  try {
+    const n = await apiFetch(`/api/notes/${id}`);
+    document.getElementById('f-title').value    = n.title    || '';
+    document.getElementById('f-body').value     = n.body     || '';
+    document.getElementById('f-author').value   = n.author   || '';
+    document.getElementById('f-priority').value = n.priority || '';
+    document.getElementById('f-tags').value     = (n.tags||[]).join(', ');
+    document.getElementById('f-title').focus();
+  } catch(e) {
+    showMsg(e.message, 'err');
+  }
+}
+
+// ── delete note ───────────────────────────────────────────────────────────
+let pendingDeleteId       = null;
+let pendingDeleteFilename = null;
+
+function confirmDelete(id, filename) {
+  pendingDeleteId       = id;
+  pendingDeleteFilename = filename;
+  document.getElementById('confirm-msg').textContent = `Delete "${filename}"? This cannot be undone.`;
+  document.getElementById('confirm-modal').classList.add('on');
+}
+
+document.getElementById('confirm-cancel').addEventListener('click', () => {
+  document.getElementById('confirm-modal').classList.remove('on');
+  pendingDeleteId = pendingDeleteFilename = null;
+});
+
+document.getElementById('confirm-ok').addEventListener('click', async () => {
+  document.getElementById('confirm-modal').classList.remove('on');
+  if (!pendingDeleteId) return;
+  try {
+    await apiFetch(`/api/notes/${pendingDeleteId}`, {method:'DELETE'});
+    if (activeNote && activeNote.id === pendingDeleteId) {
+      activeNote = null;
+      noteReader.innerHTML = '<div class="empty-pane"><div class="big">◎</div><div>Note deleted.</div></div>';
+      showReader();
+    }
+    await loadNotes();
+  } catch(e) {
+    alert('Delete failed: ' + e.message);
+  }
+  pendingDeleteId = pendingDeleteFilename = null;
+});
+
+// ── search ────────────────────────────────────────────────────────────────
+document.getElementById('btn-search').addEventListener('click', doSearch);
+document.getElementById('search-input').addEventListener('keydown', e => e.key==='Enter'&&doSearch());
+
+async function doSearch() {
+  const q   = document.getElementById('search-input').value.trim();
+  const out = document.getElementById('search-results');
+  if (!q) { out.innerHTML=''; return; }
+  out.innerHTML = '<div class="msg">Searching…</div>';
+  const kws = q.split(/\s+/).filter(Boolean);
+  const qs  = kws.map(k=>`q=${encodeURIComponent(k)}`).join('&');
+  try {
+    const d = await apiFetch('/api/notes/search?' + qs);
+    if (!d.notes.length) { out.innerHTML=`<div class="msg">No results for "${esc(q)}".</div>`; return; }
+    out.innerHTML = `<div style="font-size:11px;color:var(--muted);margin-bottom:12px">
+      ${d.total} result${d.total!==1?'s':''} for ${d.query.map(k=>`<span class="kw-badge">${esc(k)}</span>`).join(' ')}
+    </div>` + d.notes.map(n=>`
+      <div class="result-card" data-id="${n.id}">
+        <div class="rc-title">${esc(n.title||n.filename)}</div>
+        <div class="rc-matches">${(n.matched_keywords||[]).map(k=>`<span class="kw-badge">${esc(k)}</span>`).join('')}</div>
+        <div class="rc-meta">${n.author?`author: ${esc(n.author)} · `:''}${n.modified?`modified: ${n.modified.slice(0,10)}`:''}</div>
+      </div>`).join('');
+    out.querySelectorAll('.result-card').forEach(c=>c.addEventListener('click',()=>{
+      document.querySelector('[data-tab="notes"]').click();
+      openNote(+c.dataset.id);
+    }));
+  } catch(e) { out.innerHTML=`<div class="msg err">${esc(e.message)}</div>`; }
+}
+
+// ── stats ─────────────────────────────────────────────────────────────────
+let statsLoaded = false;
+async function loadStats() {
+  if (statsLoaded) return;
+  const el = document.getElementById('view-stats');
+  el.innerHTML = '<div class="msg">Loading…</div>';
+  try {
+    const s = await apiFetch('/api/stats');
+    statsLoaded = true;
+    const barTable = obj => {
+      const entries = Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,12);
+      if (!entries.length) return '<div class="msg" style="padding:8px">None recorded.</div>';
+      const mx = Math.max(...entries.map(e=>e[1]),1);
+      return entries.map(([n,c])=>`<div class="bar-row"><div class="bar-name">${esc(n)}</div><div class="bar-cnt">${c}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(c/mx*100)}%"></div></div></div>`).join('');
+    };
+    el.innerHTML = `
+      <div class="stat-cards">
+        ${[[s.total_notes,'total notes'],[s.total_words.toLocaleString(),'total words'],[s.avg_words.toLocaleString(),'avg words/note'],[s.no_title,'missing title'],[s.no_author,'missing author'],[s.no_tags,'missing tags']].map(([v,l])=>`<div class="stat-card"><div class="stat-val">${v}</div><div class="stat-lbl">${l}</div></div>`).join('')}
+      </div>
+      <div class="two-col">
+        <div class="section"><div class="section-hd">by author</div>${barTable(s.by_author)}</div>
+        <div class="section"><div class="section-hd">by priority</div>${barTable(s.by_priority)}</div>
+      </div>
+      <div class="section"><div class="section-hd">by tag</div>${barTable(s.by_tag)}</div>`;
+  } catch(e) { el.innerHTML=`<div class="msg err">${esc(e.message)}</div>`; }
+}
+
+// ── datasets ──────────────────────────────────────────────────────────────
+let datasetsLoaded = false;
+let allDatasets    = [];
+
+async function loadDatasets(force=false) {
+  if (datasetsLoaded && !force) return;
+  const listEl = document.getElementById('ds-list');
+  listEl.innerHTML = '<div class="msg" style="padding:20px">Loading…</div>';
+  try {
+    const d  = await apiFetch('/api/datasets');
+    datasetsLoaded = true;
+    allDatasets    = d.datasets;
+    if (!d.datasets.length) {
+      listEl.innerHTML = '<div class="msg" style="padding:16px;font-size:11px">No datasets yet.<br>Click <b style="color:var(--accent)">+ Upload Dataset</b>.</div>';
+      return;
+    }
+    listEl.innerHTML = d.datasets.map(ds => `
+      <div class="ds-row" data-id="${ds.id}">
+        <div class="ds-row-name">${esc(ds.title||ds.filename)}</div>
+        <div class="ds-row-meta">${esc(ds.format)} ${ds.rows ? '· ' + ds.rows + ' rows' : ''}</div>
+      </div>`).join('');
+    listEl.querySelectorAll('.ds-row').forEach(row =>
+      row.addEventListener('click', () => openDataset(+row.dataset.id))
+    );
+  } catch(e) {
+    listEl.innerHTML = `<div class="msg err" style="padding:16px">${esc(e.message)}</div>`;
+  }
+}
+
+// dataset view state
+let dsCurrentId   = null;
+let dsCurrentPage = 1;
+const DS_PER_PAGE = 100;
+
+function openDataset(id) {
+  document.querySelectorAll('.ds-row').forEach(r => r.classList.toggle('sel', +r.dataset.id === id));
+  dsCurrentId   = id;
+  dsCurrentPage = 1;
+  renderDatasetMeta(id);
+}
+
+function metaLabel(txt) {
+  return `<b style="color:var(--blue);font-family:var(--mono);font-size:10px">${txt}</b>`;
+}
+
+function renderDatasetMeta(id) {
+  const ds = allDatasets.find(d => d.id === id);
+  if (!ds) return;
+  const content = document.getElementById('ds-content');
+  const fields  = ds.fields ? (typeof ds.fields === 'string' ? ds.fields : ds.fields.join(', ')) : '';
+
+  content.innerHTML = `
+    <div class="ds-tabs">
+      <button class="ds-tab active" id="tab-meta">Info</button>
+      <button class="ds-tab"       id="tab-data">Data</button>
+    </div>
+    <div id="ds-panel-meta">
+      <div class="ds-card">
+        <span class="ds-fmt">${esc(ds.format)}</span>
+        <div style="flex:1">
+          <div class="ds-title">${esc(ds.title||ds.filename)}</div>
+          ${ds.description ? `<div class="ds-desc">${esc(ds.description)}</div>` : ''}
+          <div class="ds-meta">
+            ${metaLabel('file')} ${esc(ds.filename)}<br>
+            ${ds.rows     ? metaLabel('rows')     + ' ' + ds.rows + ' rows × ' + ds.columns + ' columns<br>' : ''}
+            ${ds.author   ? metaLabel('author')   + ' ' + esc(ds.author)   + '<br>' : ''}
+            ${ds.priority ? metaLabel('priority') + ' ' + esc(ds.priority) + '<br>' : ''}
+            ${ds.imported ? metaLabel('imported') + ' ' + ds.imported      + '<br>' : ''}
+            ${ds.source_url ? metaLabel('source') + ' <a href="' + esc(ds.source_url) + '" target="_blank" style="color:var(--accent)">' + esc(ds.source_url) + '</a><br>' : ''}
+            ${ds.license  ? metaLabel('license')  + ' ' + esc(ds.license)  + '<br>' : ''}
+          </div>
+          ${fields ? '<div style="margin-top:8px;font-size:11px;color:var(--muted)">' + metaLabel('fields') + ' ' + esc(fields) + '</div>' : ''}
+          ${tagsHtml(ds.tags)}
+        </div>
+      </div>
+    </div>
+    <div id="ds-panel-data" style="display:none;flex:1;overflow:hidden;flex-direction:column">
+      <div class="msg">Loading data…</div>
+    </div>`;
+
+  document.getElementById('tab-meta').addEventListener('click', () => {
+    document.getElementById('tab-meta').classList.add('active');
+    document.getElementById('tab-data').classList.remove('active');
+    document.getElementById('ds-panel-meta').style.display = '';
+    document.getElementById('ds-panel-data').style.display = 'none';
+  });
+
+  document.getElementById('tab-data').addEventListener('click', () => {
+    document.getElementById('tab-data').classList.add('active');
+    document.getElementById('tab-meta').classList.remove('active');
+    document.getElementById('ds-panel-meta').style.display = 'none';
+    document.getElementById('ds-panel-data').style.display = 'flex';
+    dsSearchQuery = ''; loadDatasetPage(id, dsCurrentPage, '');
+  });
+}
+
+// current search query for the open dataset
+let dsSearchQuery = '';
+
+function highlightMatch(text, query) {
+  if (!query) return esc(text);
+  const safe  = esc(text);
+  const safeQ = esc(query);
+  // case-insensitive highlight
+  const re = new RegExp('(' + safeQ.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+  return safe.replace(re, '<mark>$1</mark>');
+}
+
+async function loadDatasetPage(id, page, query) {
+  const panel = document.getElementById('ds-panel-data');
+  if (!panel) return;
+
+  // First call: build the search bar shell, subsequent calls just refresh the table area
+  const isFirstRender = !document.getElementById('ds-search-input');
+  if (isFirstRender) {
+    panel.innerHTML = `
+      <div class="ds-search-bar">
+        <input id="ds-search-input" type="text" placeholder="Search rows… (any column)" value="${esc(query||'')}"/>
+        <button id="ds-search-btn">Search</button>
+        <button class="clr-btn" id="ds-clear-btn" style="${query?'':'display:none'}">Clear</button>
+      </div>
+      <div id="ds-match-info" class="ds-match-info" style="display:none"></div>
+      <div id="ds-table-area" style="flex:1;overflow:hidden;display:flex;flex-direction:column;gap:0"></div>`;
+
+    const input   = document.getElementById('ds-search-input');
+    const doSearch = () => {
+      dsSearchQuery = input.value.trim();
+      document.getElementById('ds-clear-btn').style.display = dsSearchQuery ? '' : 'none';
+      loadDatasetPage(id, 1, dsSearchQuery);
+    };
+    document.getElementById('ds-search-btn').addEventListener('click', doSearch);
+    input.addEventListener('keydown', e => e.key === 'Enter' && doSearch());
+    document.getElementById('ds-clear-btn').addEventListener('click', () => {
+      input.value = ''; dsSearchQuery = '';
+      document.getElementById('ds-clear-btn').style.display = 'none';
+      loadDatasetPage(id, 1, '');
+    });
+  } else {
+    // update input value if query changed externally
+    document.getElementById('ds-search-input').value = query || '';
+    document.getElementById('ds-clear-btn').style.display = query ? '' : 'none';
+  }
+
+  dsCurrentPage = page;
+  const tableArea = document.getElementById('ds-table-area');
+  tableArea.innerHTML = '<div class="msg">Loading…</div>';
+
+  try {
+    let url = `/api/datasets/${id}/data?page=${page}&per_page=${DS_PER_PAGE}`;
+    if (query) url += '&q=' + encodeURIComponent(query);
+    const d = await apiFetch(url);
+
+    // Update match info banner
+    const infoEl = document.getElementById('ds-match-info');
+    if (query) {
+      infoEl.style.display = 'block';
+      infoEl.innerHTML = d.total === 0
+        ? `No rows matched <b>${esc(query)}</b>`
+        : `<b>${d.total.toLocaleString()}</b> row${d.total!==1?'s':''} matched <b>${esc(query)}</b>`;
+    } else {
+      infoEl.style.display = 'none';
+    }
+
+    if (!d.rows.length) {
+      tableArea.innerHTML = `<div class="msg">No rows match "${esc(query||'')}".</div>`;
+      return;
+    }
+
+    // Build table with highlighted cells
+    const thead = '<thead><tr>' + d.columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr></thead>';
+    const tbody = '<tbody>' + d.rows.map(row =>
+      '<tr>' + row.map(cell => {
+        const txt = String(cell ?? '');
+        return `<td title="${esc(txt)}">${highlightMatch(txt, query)}</td>`;
+      }).join('') + '</tr>'
+    ).join('') + '</tbody>';
+
+    const pageStart = (page - 1) * d.per_page + 1;
+    const pageEnd   = Math.min(page * d.per_page, d.total);
+
+    tableArea.innerHTML = `
+      <div class="ds-table-wrap">
+        <table class="ds-table">${thead}${tbody}</table>
+      </div>
+      <div class="ds-pagination">
+        <button id="pg-first" ${page<=1?'disabled':''}>«</button>
+        <button id="pg-prev"  ${page<=1?'disabled':''}>‹</button>
+        <span class="pg-info">rows ${pageStart}–${pageEnd} of ${d.total.toLocaleString()}</span>
+        <button id="pg-next" ${page>=d.pages?'disabled':''}>›</button>
+        <button id="pg-last" ${page>=d.pages?'disabled':''}>»</button>
+        <span style="margin-left:auto;font-family:var(--mono)">page ${page} / ${d.pages}</span>
+      </div>`;
+
+    document.getElementById('pg-first').addEventListener('click', () => loadDatasetPage(id, 1,        query));
+    document.getElementById('pg-prev' ).addEventListener('click', () => loadDatasetPage(id, page - 1, query));
+    document.getElementById('pg-next' ).addEventListener('click', () => loadDatasetPage(id, page + 1, query));
+    document.getElementById('pg-last' ).addEventListener('click', () => loadDatasetPage(id, d.pages,  query));
+  } catch(e) {
+    tableArea.innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
+  }
+}
+
+// ── upload form ───────────────────────────────────────────────────────────
+document.getElementById('btn-upload-dataset').addEventListener('click', showUploadForm);
+
+function showUploadForm() {
+  document.querySelectorAll('.ds-row').forEach(r => r.classList.remove('sel'));
+  const content = document.getElementById('ds-content');
+  content.innerHTML = `
+    <div class="up-form">
+      <div class="up-hd">+ Upload Dataset</div>
+
+      <div class="drop-zone" id="drop-zone">
+        <input type="file" id="ds-file-input" accept=".csv,.json"/>
+        <div class="dz-icon">⬆</div>
+        <div class="dz-label">Drop a <b>.csv</b> or <b>.json</b> file here,<br>or click to browse</div>
+        <div class="dz-chosen" id="dz-chosen"></div>
+      </div>
+
+      <div class="up-preview" id="up-preview"></div>
+
+      <div class="f-row">
+        <label>Title</label>
+        <input id="ds-title" type="text" placeholder="Leave blank to use filename"/>
+      </div>
+      <div class="f-row">
+        <label>Description</label>
+        <input id="ds-desc" type="text" placeholder="Short description…"/>
+      </div>
+      <div class="f-row-2">
+        <div class="f-row">
+          <label>Author</label>
+          <input id="ds-author" type="text" placeholder="your name"/>
+        </div>
+        <div class="f-row-2">
+          <div class="f-row" style="flex:1">
+            <label>Priority</label>
+            <input id="ds-priority" type="text" placeholder="high / 1"/>
+          </div>
+        </div>
+      </div>
+      <div class="f-row">
+        <label>Tags</label>
+        <input id="ds-tags" type="text" placeholder="finance, sales, q3"/>
+      </div>
+      <div class="f-row">
+        <label>Source URL</label>
+        <input id="ds-source-url" type="text" placeholder="https://…"/>
+      </div>
+      <div class="f-row">
+        <label>License</label>
+        <input id="ds-license" type="text" placeholder="CC-BY, MIT, …"/>
+      </div>
+
+      <div class="up-progress" id="up-progress"><div class="up-progress-bar" id="up-progress-bar"></div></div>
+
+      <div class="f-actions">
+        <button class="btn"       id="ds-submit">Upload</button>
+        <button class="btn-ghost" id="ds-cancel">Cancel</button>
+      </div>
+      <div class="f-msg" id="ds-msg"></div>
+    </div>`;
+
+  // file picker events
+  const fileInput = document.getElementById('ds-file-input');
+  const dropZone  = document.getElementById('drop-zone');
+  const chosen    = document.getElementById('dz-chosen');
+  const preview   = document.getElementById('up-preview');
+
+  function handleFile(file) {
+    if (!file) return;
+    chosen.textContent = file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)';
+    chosen.style.display = 'block';
+    // Auto-fill title from filename
+    if (!document.getElementById('ds-title').value) {
+      document.getElementById('ds-title').value = file.name.replace(/\.[^.]+$/, '').replace(/[_-]/g,' ');
+    }
+    // Show quick preview info
+    const reader = new FileReader();
+    reader.onload = e => {
+      const text = e.target.result;
+      const lines = text.split('\n').filter(Boolean);
+      if (file.name.endsWith('.csv')) {
+        preview.textContent = lines[0] ? 'Columns: ' + lines[0] : '';
+        preview.style.display = lines[0] ? 'block' : 'none';
+      } else {
+        try {
+          const j = JSON.parse(text);
+          const count = Array.isArray(j) ? j.length : 1;
+          preview.textContent = count + ' record' + (count!==1?'s':'') + ' detected';
+          preview.style.display = 'block';
+        } catch { preview.style.display = 'none'; }
+      }
+    };
+    reader.readAsText(file.slice(0, 8192));
+  }
+
+  fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag');
+    const file = e.dataTransfer.files[0];
+    if (file) { fileInput._droppedFile = file; handleFile(file); }
+  });
+
+  document.getElementById('ds-cancel').addEventListener('click', () => {
+    document.getElementById('ds-content').innerHTML =
+      '<div class="empty-pane"><div class="big">◎</div><div>Select a dataset or upload a new one</div></div>';
+  });
+
+  document.getElementById('ds-submit').addEventListener('click', async () => {
+    const file = fileInput._droppedFile || fileInput.files[0];
+    const msgEl = document.getElementById('ds-msg');
+    const submitBtn = document.getElementById('ds-submit');
+    const progressWrap = document.getElementById('up-progress');
+    const progressBar  = document.getElementById('up-progress-bar');
+
+    if (!file) {
+      msgEl.textContent = 'Please select a file first.';
+      msgEl.className = 'f-msg err'; msgEl.style.display = 'block'; return;
+    }
+    const suffix = file.name.split('.').pop().toLowerCase();
+    if (!['csv','json'].includes(suffix)) {
+      msgEl.textContent = 'Only .csv and .json files are supported.';
+      msgEl.className = 'f-msg err'; msgEl.style.display = 'block'; return;
+    }
+
+    submitBtn.disabled = true; submitBtn.textContent = 'Uploading…';
+    msgEl.style.display = 'none';
+    progressWrap.style.display = 'block'; progressBar.style.width = '30%';
+
+    const form = new FormData();
+    form.append('file',       file);
+    form.append('title',      document.getElementById('ds-title').value.trim());
+    form.append('description',document.getElementById('ds-desc').value.trim());
+    form.append('author',     document.getElementById('ds-author').value.trim());
+    form.append('priority',   document.getElementById('ds-priority').value.trim());
+    form.append('tags',       document.getElementById('ds-tags').value.trim());
+    form.append('source_url', document.getElementById('ds-source-url').value.trim());
+    form.append('license',    document.getElementById('ds-license').value.trim());
+
+    try {
+      progressBar.style.width = '70%';
+      const res = await fetch(api() + '/api/datasets/upload', { method: 'POST', body: form });
+      progressBar.style.width = '100%';
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      msgEl.textContent = 'Uploaded: ' + data.filename + (data.rows ? ' (' + data.rows + ' rows)' : '');
+      msgEl.className = 'f-msg ok'; msgEl.style.display = 'block';
+      datasetsLoaded = false;
+      await loadDatasets(true);
+      setTimeout(() => {
+        const newDs = allDatasets.find(d => d.filename === data.filename);
+        if (newDs) openDataset(newDs.id);
+      }, 400);
+    } catch(e) {
+      progressBar.style.width = '0%';
+      msgEl.textContent = e.message; msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+    } finally {
+      submitBtn.disabled = false; submitBtn.textContent = 'Upload';
+      setTimeout(() => { progressWrap.style.display='none'; progressBar.style.width='0%'; }, 800);
+    }
+  });
+}
+
+// ── boot ──────────────────────────────────────────────────────────────────
+checkHealth();
+loadNotes();
+</script>
+</body>
+</html>
