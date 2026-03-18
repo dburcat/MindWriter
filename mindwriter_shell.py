@@ -173,6 +173,8 @@ def command_loop(notes_dir):
                 keywords = input("keywords> ").strip().lower()
                 keywords = re.split(r'[,;\s]+', keywords)
                 mindwriter.search_notes(notes_dir, keywords)
+            elif command == "stats" or command == "ss":
+                mindwriter.show_stats(notes_dir)
             else:
                 print(f"Unknown command: '{command}'")
                 print("Type 'help' for available commands.")
