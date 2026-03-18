@@ -28,6 +28,7 @@ def setup():
 
     return notes_dir
 
+
 def build_index(note_files):
     """
     Given a sorted list of note Path objects return two lookup dicts:
@@ -207,6 +208,7 @@ Write your note content here.
         print(f"Error processing note: {e}")
         return False
 
+
 def update_modified_timestamp(file_path):
     """
     Rewrite the 'modified' field in the YAML front matter to the current
@@ -216,34 +218,34 @@ def update_modified_timestamp(file_path):
     and a warning is printed.
     """
     from datetime import datetime
- 
+
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
     except Exception as e:
         print(f"Warning: could not read '{file_path.name}' to update timestamp: {e}")
         return
- 
+
     # Must start with a YAML block
     if not lines or lines[0].strip() != '---':
         print(f"Warning: '{file_path.name}' has no YAML front matter — 'modified' not updated.")
         return
- 
+
     # Locate closing ---
     yaml_end = -1
     for i in range(1, len(lines)):
         if lines[i].strip() == '---':
             yaml_end = i
             break
- 
+
     if yaml_end == -1:
         print(f"Warning: '{file_path.name}' YAML block is not closed — 'modified' not updated.")
         return
- 
+
     now_iso = datetime.now().isoformat()
     new_modified_line = f"modified: {now_iso}\n"
     modified_found = False
- 
+
     # Try to update an existing 'modified:' line inside the header
     for i in range(1, yaml_end):
         key = lines[i].split(':', 1)[0].strip() if ':' in lines[i] else ''
@@ -251,19 +253,20 @@ def update_modified_timestamp(file_path):
             lines[i] = new_modified_line
             modified_found = True
             break
- 
+
     # If no 'modified' key existed, insert one before the closing ---
     if not modified_found:
         lines.insert(yaml_end, new_modified_line)
- 
+
     try:
         with open(file_path, 'w', encoding='utf-8') as f:
             f.writelines(lines)
     except Exception as e:
         print(f"Warning: could not write updated timestamp to '{file_path.name}': {e}")
 
+
 def edit_note(notes_dir, identifier):
-    """Edit a note by index number or filename."""
+    """Edit a note by index number or filename, then update its modified timestamp."""
     note_file = resolve_to_path(notes_dir, identifier)
     if not note_file:
         print(f"Error: Note '{identifier}' not found.")
@@ -271,6 +274,8 @@ def edit_note(notes_dir, identifier):
 
     editor = os.environ.get('EDITOR', 'vi')
     os.system(f"{editor} {note_file}")
+
+    # Update the modified timestamp in the YAML header after the editor closes
     update_modified_timestamp(note_file)
     print(f"Note edited: {note_file.name}")
     return True
@@ -295,6 +300,156 @@ def delete_note(notes_dir, identifier):
     else:
         print("Deletion cancelled.")
         return True
+
+
+def search_notes(notes_dir, keywords):
+    """
+    Search all notes for one or more keywords (case-insensitive).
+
+    Searches three areas independently for each keyword:
+      - YAML header fields  (title, tags, author, priority, …)
+      - Body content        (everything after the closing ---)
+      - Filename            (the note's filename, minus extension)
+
+    A note matches if *every* keyword appears in at least one of those areas.
+    Results are printed with the global index, which fields matched, and up to
+    two lines of context per keyword hit in the body.  The user can then open
+    any result by typing its index number.
+    """
+    if not notes_dir.exists():
+        print(f"Error: Notes directory does not exist: {notes_dir}", file=sys.stderr)
+        return False
+
+    if not keywords:
+        print("Error: provide at least one keyword to search for.", file=sys.stderr)
+        return False
+
+    note_files = collect_note_files(notes_dir)
+    if not note_files:
+        print(f"No notes found in {notes_dir}")
+        return True
+
+    id_to_file, _ = build_index(note_files)
+    kw_lower = [k.lower() for k in keywords]
+
+
+    def split_header_body(file_path):
+        """Return (header_text, body_lines) for a note file."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except Exception:
+            return '', []
+
+        if not lines or lines[0].strip() != '---':
+            return '', lines
+
+        yaml_end = -1
+        for i in range(1, len(lines)):
+            if lines[i].strip() == '---':
+                yaml_end = i
+                break
+
+        if yaml_end == -1:
+            return ''.join(lines), []
+
+        header_text = ''.join(lines[1:yaml_end])
+        body_lines  = lines[yaml_end + 1:]
+        return header_text, body_lines
+
+    def context_lines(body_lines, keyword, context=1):
+        """Return brief context snippets around each line containing keyword."""
+        snippets = []
+        for i, line in enumerate(body_lines):
+            if keyword in line.lower():
+                start = max(0, i - context)
+                end   = min(len(body_lines), i + context + 1)
+                chunk = ''.join(body_lines[start:end]).strip()
+                # Truncate very long lines for readability
+                if len(chunk) > 120:
+                    chunk = chunk[:117] + '…'
+                snippets.append(chunk)
+                if len(snippets) >= 2:   # show at most 2 snippets per keyword
+                    break
+        return snippets
+
+
+    results = []   # list of (note_id, note_file, match_report)
+
+    for note_id, note_file in id_to_file.items():
+        metadata    = parse_yaml_header(note_file)
+        header_text, body_lines = split_header_body(note_file)
+        filename_stem = note_file.stem.lower()
+
+        match_report = {}   # keyword -> {'locations': [...], 'snippets': [...]}
+
+        for kw in kw_lower:
+            locations = []
+            snippets  = []
+
+            # Check filename
+            if kw in filename_stem:
+                locations.append('filename')
+
+            # Check every header field value
+            for field, value in metadata.items():
+                if field == 'file':
+                    continue
+                if kw in str(value).lower():
+                    locations.append(f'header:{field}')
+
+            # Check body
+            body_snippets = context_lines(body_lines, kw)
+            if body_snippets:
+                locations.append('body')
+                snippets = body_snippets
+
+            if locations:
+                match_report[kw] = {'locations': locations, 'snippets': snippets}
+
+        # Note matches if ANY keyword was found (OR logic)
+        if match_report:
+            results.append((note_id, note_file, match_report))
+
+
+    query_display = ' + '.join(f'"{k}"' for k in keywords)
+
+    if not results:
+        print(f"\nNo notes found matching {query_display}.")
+        return True
+
+    print(f"\nSearch results for {query_display}  —  {len(results)} note(s) found:")
+    print("=" * 60)
+
+    for note_id, note_file, match_report in results:
+        metadata = parse_yaml_header(note_file)
+        title    = metadata.get('title', note_file.name) or note_file.name
+        print(f"[{note_id}] {note_file.name}")
+        print(f"   Title: {title}")
+
+        for kw, info in match_report.items():
+            loc_str = ', '.join(info['locations'])
+            print(f"   Keyword '{kw}' found in: {loc_str}")
+            for snippet in info['snippets']:
+                # Indent each snippet line for readability
+                for sline in snippet.splitlines():
+                    print(f"      │ {sline}")
+        print()
+
+    while True:
+        prompt = input("Enter an index to open a note, or 'q' to quit: ").strip().lower()
+        if prompt == 'q':
+            break
+        try:
+            chosen_id = int(prompt)
+            if any(r[0] == chosen_id for r in results):
+                read_note(notes_dir, str(chosen_id))
+            else:
+                print(f"Index {chosen_id} is not in the result list above.")
+        except ValueError:
+            print("Invalid input. Enter a result index number or 'q'.")
+
+    return True
 
 
 def list_notes(notes_dir):
@@ -392,7 +547,8 @@ Available commands:
   read  <index|note-id>      Display a note by index number or filename
   edit  <index|note-id>      Edit a note by index number or filename
   delete <index|note-id>     Delete a note by index number or filename
-  search "query"             Search notes for text (title, tags, content)
+  search <kw> [kw2 ...]      Search notes by keyword(s) — matches title, tags, body, filename
+                             A note appears if ANY keyword matches (OR logic)
   stats                      Display statistics about your notes
   shell                      Run interactive terminal shell
 
@@ -441,6 +597,13 @@ def main():
             print("Error: delete requires a note index or filename.", file=sys.stderr)
             finish(1)
         finish(0 if delete_note(notes_dir, sys.argv[2]) else 1)
+    elif command == "search":
+        if len(sys.argv) < 3:
+            print("Error: search requires at least one keyword.", file=sys.stderr)
+            print("Usage: mindwriter.py search <keyword> [keyword2 ...]", file=sys.stderr)
+            finish(1)
+        keywords = sys.argv[2:]
+        finish(0 if search_notes(notes_dir, keywords) else 1)
     elif command == "shell":
         mindwriter_shell.main()
     else:
