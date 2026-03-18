@@ -29,6 +29,10 @@ def setup():
     return notes_dir
 
 
+# ---------------------------------------------------------------------------
+# In-memory index helpers
+# ---------------------------------------------------------------------------
+
 def build_index(note_files):
     """
     Given a sorted list of note Path objects return two lookup dicts:
@@ -87,6 +91,10 @@ def resolve_to_path(notes_dir, identifier):
     return None
 
 
+# ---------------------------------------------------------------------------
+# YAML helper
+# ---------------------------------------------------------------------------
+
 def parse_yaml_header(file_path):
     """
     Parse YAML front matter from a note file.
@@ -108,18 +116,29 @@ def parse_yaml_header(file_path):
         if yaml_end == -1:
             return {'title': file_path.name, 'file': file_path.name}
 
+        # Fields that are always normalised to lowercase
+        LOWERCASE_FIELDS = {'title', 'author', 'tags'}
+
         metadata = {'file': file_path.name}
         for line in lines[1:yaml_end]:
             line = line.strip()
             if ':' in line:
                 key, value = line.split(':', 1)
-                metadata[key.strip()] = value.strip()
+                key   = key.strip()
+                value = value.strip()
+                if key in LOWERCASE_FIELDS:
+                    value = value.lower()
+                metadata[key] = value
 
         return metadata
 
     except Exception as e:
         return {'title': file_path.name, 'file': file_path.name, 'error': str(e)}
 
+
+# ---------------------------------------------------------------------------
+# CRUD operations
+# ---------------------------------------------------------------------------
 
 def read_note(notes_dir, identifier):
     """Read and display a note by index number or filename."""
@@ -302,6 +321,10 @@ def delete_note(notes_dir, identifier):
         return True
 
 
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
+
 def search_notes(notes_dir, keywords):
     """
     Search all notes for one or more keywords (case-insensitive).
@@ -332,6 +355,7 @@ def search_notes(notes_dir, keywords):
     id_to_file, _ = build_index(note_files)
     kw_lower = [k.lower() for k in keywords]
 
+    # ── helpers ──────────────────────────────────────────────────────────────
 
     def split_header_body(file_path):
         """Return (header_text, body_lines) for a note file."""
@@ -373,6 +397,7 @@ def search_notes(notes_dir, keywords):
                     break
         return snippets
 
+    # ── scan every note ───────────────────────────────────────────────────────
 
     results = []   # list of (note_id, note_file, match_report)
 
@@ -411,6 +436,7 @@ def search_notes(notes_dir, keywords):
         if match_report:
             results.append((note_id, note_file, match_report))
 
+    # ── display results ───────────────────────────────────────────────────────
 
     query_display = ' + '.join(f'"{k}"' for k in keywords)
 
@@ -436,6 +462,8 @@ def search_notes(notes_dir, keywords):
                     print(f"      │ {sline}")
         print()
 
+    # ── interactive open ──────────────────────────────────────────────────────
+
     while True:
         prompt = input("Enter an index to open a note, or 'q' to quit: ").strip().lower()
         if prompt == 'q':
@@ -451,6 +479,10 @@ def search_notes(notes_dir, keywords):
 
     return True
 
+
+# ---------------------------------------------------------------------------
+# List / browse
+# ---------------------------------------------------------------------------
 
 def list_notes(notes_dir):
     """Interactively list and browse notes with pagination."""
@@ -534,6 +566,217 @@ def list_notes(notes_dir):
     return True
 
 
+# ---------------------------------------------------------------------------
+# Stats
+# ---------------------------------------------------------------------------
+
+def show_stats(notes_dir):
+    """
+    Scan all notes and display a rich summary covering:
+      - Total note count and cumulative word / line counts
+      - Breakdown by author
+      - Breakdown by priority
+      - Breakdown by tag  (supports comma-separated and bracket list formats)
+      - Notes with no title / no tags / no author
+      - The 5 most-recently modified notes
+      - The 5 largest notes by word count
+    """
+    from collections import Counter
+    from datetime import datetime
+
+    if not notes_dir.exists():
+        print(f"Error: Notes directory does not exist: {notes_dir}", file=sys.stderr)
+        return False
+
+    note_files = collect_note_files(notes_dir)
+    if not note_files:
+        print(f"No notes found in {notes_dir}")
+        return True
+
+    # ── accumulators ─────────────────────────────────────────────────────────
+    total_words      = 0
+    total_lines      = 0
+    author_counter   = Counter()
+    priority_counter = Counter()
+    tag_counter      = Counter()
+    no_title         = []
+    no_tags          = []
+    no_author        = []
+    word_counts      = {}   # path -> int
+    mod_dates        = {}   # path -> datetime | None
+
+    def parse_tags(raw):
+        """Normalise tag strings like '[work, python]' or 'work, python'."""
+        raw = raw.strip().strip('[]')
+        if not raw:
+            return []
+        return [t.strip().lower() for t in raw.split(',') if t.strip()]
+
+    def count_words(file_path, yaml_end):
+        """Count words in the body section only (below the YAML block)."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            body = lines[yaml_end + 1:] if yaml_end >= 0 else lines
+            text = ' '.join(body)
+            return len(text.split()), len(body)
+        except Exception:
+            return 0, 0
+
+    def find_yaml_end(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            if not lines or lines[0].strip() != '---':
+                return -1
+            for i in range(1, len(lines)):
+                if lines[i].strip() == '---':
+                    return i
+        except Exception:
+            pass
+        return -1
+
+    # ── scan ─────────────────────────────────────────────────────────────────
+    for note_file in note_files:
+        meta     = parse_yaml_header(note_file)
+        yaml_end = find_yaml_end(note_file)
+        words, lines = count_words(note_file, yaml_end)
+
+        total_words += words
+        total_lines += lines
+        word_counts[note_file] = words
+
+        # Author
+        author = meta.get('author', '').strip().lower()
+        if author:
+            author_counter[author] += 1
+        else:
+            no_author.append(note_file.name)
+
+        # Priority
+        priority = meta.get('priority', '').strip().lower()
+        if priority:
+            priority_counter[priority] += 1
+
+        # Tags
+        raw_tags = meta.get('tags', '').strip()
+        tags = parse_tags(raw_tags)   # parse_tags already lowercases each tag
+        if tags:
+            for tag in tags:
+                tag_counter[tag] += 1
+        else:
+            no_tags.append(note_file.name)
+
+        # Title
+        title = meta.get('title', '').strip().lower()
+        if not title:
+            no_title.append(note_file.name)
+
+        # Modified date (for recency ranking)
+        raw_mod = meta.get('modified', '').strip()
+        parsed_mod = None
+        if raw_mod:
+            for fmt in ('%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d'):
+                try:
+                    parsed_mod = datetime.strptime(raw_mod[:26], fmt)
+                    break
+                except ValueError:
+                    continue
+        mod_dates[note_file] = parsed_mod
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+    def bar(count, total, width=20):
+        """Simple ASCII progress bar."""
+        filled = int(width * count / total) if total else 0
+        return f"[{'█' * filled}{'░' * (width - filled)}]"
+
+    def ranked_table(counter, total, label):
+        """Print a sorted frequency table with bars."""
+        if not counter:
+            print(f"  (none recorded)")
+            return
+        for name, count in counter.most_common():
+            pct = count / total * 100
+            print(f"  {bar(count, total)} {count:>4}  ({pct:5.1f}%)  {name}")
+
+    # ── display ───────────────────────────────────────────────────────────────
+    total = len(note_files)
+    W     = 60
+
+    print()
+    print("=" * W)
+    print(" NOTE STATISTICS".center(W))
+    print("=" * W)
+
+    # Overview
+    print(f"\n{'── Overview ':─<{W}}")
+    print(f"  Total notes   : {total}")
+    print(f"  Total words   : {total_words:,}")
+    print(f"  Total lines   : {total_lines:,}")
+    if total:
+        print(f"  Avg words/note: {total_words // total:,}")
+
+    # Authors
+    print(f"\n{'── By Author ':─<{W}}")
+    ranked_table(author_counter, total, 'author')
+    if no_author:
+        print(f"  No author set : {len(no_author)} note(s)")
+
+    # Priorities — sort numerically if all values are numbers, else alphabetically
+    print(f"\n{'── By Priority ':─<{W}}")
+    if priority_counter:
+        try:
+            sorted_priorities = sorted(priority_counter.items(), key=lambda x: int(x[0]))
+        except ValueError:
+            sorted_priorities = sorted(priority_counter.items(), key=lambda x: x[0].lower())
+        for name, count in sorted_priorities:
+            pct = count / total * 100
+            print(f"  {bar(count, total)} {count:>4}  ({pct:5.1f}%)  {name}")
+    else:
+        print("  (none recorded)")
+    unset_pri = total - sum(priority_counter.values())
+    if unset_pri:
+        print(f"  No priority   : {unset_pri} note(s)")
+
+    # Tags
+    print(f"\n{'── By Tag ':─<{W}}")
+    ranked_table(tag_counter, total, 'tag')
+    if no_tags:
+        print(f"  No tags set   : {len(no_tags)} note(s)")
+
+    # Completeness
+    print(f"\n{'── Completeness ':─<{W}}")
+    def pct(n): return f"{n}/{total}  ({n/total*100:.0f}%)" if total else "0"
+    print(f"  Have title    : {pct(total - len(no_title))}")
+    print(f"  Have author   : {pct(total - len(no_author))}")
+    print(f"  Have tags     : {pct(total - len(no_tags))}")
+
+    # Recently modified
+    print(f"\n{'── 5 Most Recently Modified ':─<{W}}")
+    dated   = [(f, d) for f, d in mod_dates.items() if d]
+    undated = [f for f, d in mod_dates.items() if not d]
+    dated.sort(key=lambda x: x[1], reverse=True)
+    for note_file, dt in dated[:5]:
+        print(f"  {dt.strftime('%Y-%m-%d %H:%M')}  {note_file.name}")
+    if undated and len(dated) < 5:
+        for note_file in undated[:5 - len(dated)]:
+            print(f"  (no date)            {note_file.name}")
+
+    # Largest notes
+    print(f"\n{'── 5 Largest Notes (by word count) ':─<{W}}")
+    top_words = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+    for note_file, wc in top_words:
+        print(f"  {wc:>6} words  {note_file.name}")
+
+    print()
+    print("=" * W)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Help / finish
+# ---------------------------------------------------------------------------
+
 def show_help():
     help_text = """
 Future Proof Notes Manager v0.1
@@ -563,6 +806,10 @@ Notes directory: {}
 def finish(exit_code=0):
     sys.exit(exit_code)
 
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
     notes_dir = setup()
@@ -597,6 +844,8 @@ def main():
             print("Error: delete requires a note index or filename.", file=sys.stderr)
             finish(1)
         finish(0 if delete_note(notes_dir, sys.argv[2]) else 1)
+    elif command == "stats":
+        finish(0 if show_stats(notes_dir) else 1)
     elif command == "search":
         if len(sys.argv) < 3:
             print("Error: search requires at least one keyword.", file=sys.stderr)
