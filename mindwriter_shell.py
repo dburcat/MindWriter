@@ -9,56 +9,46 @@ import sys
 from pathlib import Path
 import mindwriter
 
-
 def list_notes(notes_dir):
     """Interactively list and browse notes with pagination."""
-    # Check if notes directory exists
     if not notes_dir.exists():
         print(f"Error: Notes directory does not exist: {notes_dir}", file=sys.stderr)
         print("Create it with: mkdir -p ~/.notes/notes", file=sys.stderr)
-        print("Then copy test notes: cp test-notes/*.md ~/.notes/notes/", file=sys.stderr)
         return False
 
-    # Look for notes in the notes directory (or directly in .notes)
-    notes_subdir = notes_dir / "notes"
-    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
-
-    # Find all note files (*.md, *.note, *.txt)
-    note_files = []
-    for search_dir in search_dirs:
-        note_files.extend(search_dir.glob("*.md"))
-        note_files.extend(search_dir.glob("*.note"))
-        note_files.extend(search_dir.glob("*.txt"))
+    note_files = mindwriter.collect_note_files(notes_dir)
 
     if not note_files:
         print(f"No notes found in {notes_dir}")
-        print("Copy test notes with: cp test-notes/*.md ~/.notes/", file=sys.stderr)
         return True
 
-    note_files = sorted(note_files)
+    # Build the session index once so display and selection are consistent
+    id_to_file, _ = mindwriter.build_index(note_files)
+
     total_notes = len(note_files)
     items_per_page = 10
     total_pages = (total_notes + items_per_page - 1) // items_per_page
     current_page = 1
     run = True
     while run is True:
-        # Display current page
         start_index = (current_page - 1) * items_per_page
         end_index = start_index + items_per_page
-        page_notes = note_files[start_index:end_index]
+        # Slice using the ordered id list so page numbers match index numbers
+        page_ids = list(id_to_file.keys())[start_index:end_index]
 
         print(f"\nNotes in {notes_dir} (Page {current_page} of {total_pages}):")
         print("=" * 60)
-        for i, note_file in enumerate(page_notes, start=1):
+        for note_id in page_ids:
+            note_file = id_to_file[note_id]
             metadata = mindwriter.parse_yaml_header(note_file)
-            title = metadata.get('title', note_file.name)
-            created = metadata.get('created', 'N/A')
+            title    = metadata.get('title', note_file.name)
+            created  = metadata.get('created', 'N/A')
             modified = metadata.get('modified', 'N/A')
-            tags = metadata.get('tags', '')
-            author = metadata.get('author', 'N/A')
+            tags     = metadata.get('tags', '')
+            author   = metadata.get('author', '')
             priority = metadata.get('priority', '')
 
-            print(f"{i}. {note_file.name}")
+            print(f"[{note_id}] {note_file.name}")
             print(f"   Title: {title}")
             if created != 'N/A':
                 print(f"   Created: {created}")
@@ -71,6 +61,118 @@ def list_notes(notes_dir):
             if priority:
                 print(f"   Priority: {priority}")
             print()
+
+        print(f"Page {current_page}/{total_pages} — {len(page_ids)} shown, {total_notes} total")
+        print("Enter an index number to read that note, 'n' next, 'p' previous, 'c' create note, 'q' quit.")
+        prompt = input("> ").strip().lower()
+
+        if prompt == 'q':
+            break
+        elif prompt == 'c':
+            mindwriter.create_note(notes_dir)
+            run = False
+            list_notes(notes_dir)
+        elif prompt == 'n':
+            if current_page < total_pages:
+                current_page += 1
+            else:
+                print("Already on last page.")
+        elif prompt == 'p':
+            if current_page > 1:
+                current_page -= 1
+            else:
+                print("Already on first page.")
+        else:
+            try:
+                chosen_id = int(prompt)
+                if chosen_id in id_to_file:
+                    #mindwriter.read_note(notes_dir, str(chosen_id))
+                    # Submenu for selected note
+                    run_sub = True
+                    while run_sub is True:
+                        action = input(f"Selected: {id_to_file[chosen_id].name}\n(r)ead, (e)dit, (d)elete, (b)ack: ").strip().lower()
+                        if action == 'r':
+                            mindwriter.read_note(notes_dir, str(chosen_id))
+                            break
+                        elif action == 'e':
+                            mindwriter.edit_note(notes_dir, str(chosen_id))
+                            run = False
+                            run_sub = False
+                            list_notes(notes_dir)
+                        elif action == 'd':
+                            mindwriter.delete_note(notes_dir, str(chosen_id))
+                            # After delete, refresh the list
+                            run = False
+                            run_sub = False
+                            list_notes(notes_dir)
+                        elif action == 'b':
+                            break
+                        else:
+                            print("Invalid option. Use r, e, d, or b.")
+                else:
+                    print(f"No note with index {chosen_id}. Valid range: 1–{total_notes}")
+            except ValueError:
+                print("Invalid input. Enter a number, 'n', 'p', or 'q'.")
+
+    return True
+
+def search_list_notes(notes_dir, search_tags):
+    """Interactively list and browse notes with pagination."""
+    # Check if notes directory exists
+    if not notes_dir.exists():
+        print(f"Error: Notes directory does not exist: {notes_dir}", file=sys.stderr)
+        print("Create it with: mkdir -p ~/.notes/notes", file=sys.stderr)
+        print("Then copy test notes: cp test-notes/*.md ~/.notes/notes/", file=sys.stderr)
+        return False
+
+    note_files = mindwriter.collect_note_files(notes_dir)
+
+    if not note_files:
+        print(f"No notes found in {notes_dir}")
+        return True
+
+    # Build the session index once so display and selection are consistent
+    id_to_file, _ = mindwriter.build_index(note_files)
+
+    total_notes = len(note_files)
+    items_per_page = 10
+    total_pages = (total_notes + items_per_page - 1) // items_per_page
+    current_page = 1
+    run = True
+    index = 0
+    while run is True:
+        # Display current page
+        start_index = (current_page - 1) * items_per_page
+        end_index = start_index + items_per_page
+        page_notes = note_files[start_index:end_index]
+
+        print(f"\nNotes in {notes_dir} (Page {current_page} of {total_pages}):")
+        print("=" * 60)
+        for i, note_file in enumerate(page_notes, start=1):
+            index += 1
+            metadata = mindwriter.parse_yaml_header(note_file)
+            title = metadata.get('title', note_file.name)
+            created = metadata.get('created', 'N/A')
+            modified = metadata.get('modified', 'N/A')
+            tags = metadata.get('tags', '')
+            author = metadata.get('author', 'N/A')
+            priority = metadata.get('priority', '')
+
+            if search_tags in tags:
+
+                print(f"{index}. {note_file.name}")
+                print(f"   Title: {title}")
+                if created != 'N/A':
+                    print(f"   Created: {created}")
+                if modified != 'N/A':
+                    print(f"   Modified: {modified}")
+                if tags:
+                    print(f"   Tags: {tags}")
+                if author:
+                    print(f"   Author: {author}")
+                if priority:
+                    print(f"   Priority: {priority}")
+                print()
 
         print(f"Page {current_page}/{total_pages} - {len(page_notes)} notes shown. {len(note_files)} Total notes in folder")
 
@@ -118,7 +220,6 @@ def list_notes(notes_dir):
                             run = False
                             run_sub = False
                             list_notes(notes_dir)
-                            
                         elif action == 'b':
                             break
                         else:
@@ -127,127 +228,6 @@ def list_notes(notes_dir):
                     print("Invalid number. Please enter a number between 1 and", len(page_notes))
             except ValueError:
                 print("Invalid input. Please enter a number, 'n', 'p', or 'q'.")
-
-    return True
-
-def search_list_notes(notes_dir, search_tags):
-    """Interactively list and browse notes with pagination."""
-    # Check if notes directory exists
-    if not notes_dir.exists():
-        print(f"Error: Notes directory does not exist: {notes_dir}", file=sys.stderr)
-        print("Create it with: mkdir -p ~/.notes/notes", file=sys.stderr)
-        print("Then copy test notes: cp test-notes/*.md ~/.notes/notes/", file=sys.stderr)
-        return False
-
-    # Look for notes in the notes directory (or directly in .notes)
-    notes_subdir = notes_dir / "notes"
-    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
-
-    # Find all note files (*.md, *.note, *.txt)
-    note_files = []
-    for search_dir in search_dirs:
-        note_files.extend(search_dir.glob("*.md"))
-        note_files.extend(search_dir.glob("*.note"))
-        note_files.extend(search_dir.glob("*.txt"))
-
-    if not note_files:
-        print(f"No notes found in {notes_dir}")
-        print("Copy test notes with: cp test-notes/*.md ~/.notes/", file=sys.stderr)
-        return True
-
-    note_files = sorted(note_files)
-    total_notes = len(note_files)
-    items_per_page = 10
-    total_pages = (total_notes + items_per_page - 1) // items_per_page
-    current_page = 1
-    run = True
-    while run is True:
-        # Display current page
-        start_index = (current_page - 1) * items_per_page
-        end_index = start_index + items_per_page
-        page_notes = note_files[start_index:end_index]
-
-        print(f"\nNotes in {notes_dir} (Page {current_page} of {total_pages}):")
-        print("=" * 60)
-        for i, note_file in enumerate(page_notes, start=1):
-            metadata = mindwriter.parse_yaml_header(note_file)
-            title = metadata.get('title', note_file.name)
-            created = metadata.get('created', 'N/A')
-            modified = metadata.get('modified', 'N/A')
-            tags = metadata.get('tags', '')
-            author = metadata.get('author', 'N/A')
-            priority = metadata.get('priority', '')
-
-            if search_tags in tags:
-
-                print(f"{i}. {note_file.name}")
-                print(f"   Title: {title}")
-                if created != 'N/A':
-                    print(f"   Created: {created}")
-                if modified != 'N/A':
-                    print(f"   Modified: {modified}")
-                if tags:
-                    print(f"   Tags: {tags}")
-                if author:
-                    print(f"   Author: {author}")
-                if priority:
-                    print(f"   Priority: {priority}")
-                print()
-
-            print(f"Page {current_page}/{total_pages} - {len(page_notes)} notes shown. {len(note_files)} Total notes in folder")
-
-            # Prompt for user input
-            prompt = input("Enter number to select note, 'n' for next page, 'p' for previous, 'c' to create note, 'q' to quit: ").strip().lower()
-
-            if prompt == 'q':
-                break
-            elif prompt == 'c':
-                mindwriter.create_note(notes_dir)
-                run = False
-                list_notes(notes_dir)
-            elif prompt == 'n':
-                if current_page < total_pages:
-                    current_page += 1
-                else:
-                    print("Already on last page.")
-            elif prompt == 'p':
-                if current_page > 1:
-                    current_page -= 1
-                else:
-                    print("Already on first page.")
-            else:
-                try:
-                    num = int(prompt)
-                    if 1 <= num <= len(page_notes):
-                        selected_file = page_notes[num - 1]
-                        selected_id = selected_file.name
-                        
-                        # Submenu for selected note
-                        run_sub = True
-                        while run_sub is True:
-                            action = input(f"Selected: {selected_id}\n(r)ead, (e)dit, (d)elete, (b)ack: ").strip().lower()
-                            if action == 'r':
-                                mindwriter.read_note(notes_dir, selected_id)
-                                break
-                            elif action == 'e':
-                                mindwriter.edit_note(notes_dir, selected_id)
-                                run = False
-                                run_sub = False
-                                list_notes(notes_dir)
-                            elif action == 'd':
-                                mindwriter.delete_note(notes_dir, selected_id)
-                                # After delete, refresh the list
-                                run = False
-                                run_sub = False
-                                list_notes(notes_dir)
-                            elif action == 'b':
-                                break
-                            else:
-                                print("Invalid option. Use r, e, d, or b.")
-                    else:
-                        print("Invalid number. Please enter a number between 1 and", len(page_notes))
-                except ValueError:
-                    print("Invalid input. Please enter a number, 'n', 'p', or 'q'.")
 
     return True
 

@@ -2,6 +2,10 @@
 """
 Future Proof Notes Manager - MindWriter v0.1
 A personal notes manager using text files with YAML headers.
+
+Note indexing is handled entirely in-memory at runtime: every time notes are
+collected they are sorted alphabetically and assigned a stable integer index
+for that session.  No external index file is required.
 """
 
 import sys
@@ -13,35 +17,87 @@ import slugify
 
 def setup():
     """Initialize the notes application."""
-    # Define the notes directory in HOME, or use custom path for testing
     custom_notes_dir = os.environ.get('NOTES_DIR')
     if custom_notes_dir:
         notes_dir = Path(custom_notes_dir)
     else:
         notes_dir = Path.home() / ".notes"
 
-    # Check if notes directory exists
     if not notes_dir.exists():
-        # For CLI version, we don't automatically create it
         pass
 
     return notes_dir
+
+def build_index(note_files):
+    """
+    Given a sorted list of note Path objects return two lookup dicts:
+      id_to_file  : {1: Path(...), 2: Path(...), ...}
+      file_to_id  : {Path(...): 1, Path(...): 2, ...}
+
+    Indices are 1-based and assigned in the order the list is provided
+    (caller is responsible for sorting consistently).
+    """
+    id_to_file = {}
+    file_to_id = {}
+    for i, path in enumerate(note_files, start=1):
+        id_to_file[i] = path
+        file_to_id[path] = i
+    return id_to_file, file_to_id
+
+
+def collect_note_files(notes_dir):
+    """Return a consistently sorted list of all note Path objects."""
+    notes_subdir = notes_dir / "notes"
+    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
+    note_files = []
+    for search_dir in search_dirs:
+        note_files.extend(search_dir.glob("*.md"))
+        note_files.extend(search_dir.glob("*.note"))
+        note_files.extend(search_dir.glob("*.txt"))
+    return sorted(note_files)
+
+
+def resolve_to_path(notes_dir, identifier):
+    """
+    Resolve *identifier* (an integer index OR a filename string) to a Path.
+    Returns the Path if found, otherwise None.
+
+    Because the index is built from the live directory listing, it is always
+    consistent with what is actually on disk — no stale index file to worry
+    about.
+    """
+    note_files = collect_note_files(notes_dir)
+    id_to_file, _ = build_index(note_files)
+
+    # Try numeric index first
+    try:
+        idx = int(identifier)
+        return id_to_file.get(idx)
+    except ValueError:
+        pass
+
+    # Fall back to filename search
+    notes_subdir = notes_dir / "notes"
+    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
+    for search_dir in search_dirs:
+        candidate = search_dir / identifier
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def parse_yaml_header(file_path):
     """
     Parse YAML front matter from a note file.
-    Returns a dictionary with metadata and the content.
+    Returns a dictionary with metadata.
     """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
 
-        # Check if file starts with YAML front matter
         if not lines or lines[0].strip() != '---':
             return {'title': file_path.name, 'file': file_path.name}
 
-        # Find the closing ---
         yaml_end = -1
         for i in range(1, len(lines)):
             if lines[i].strip() == '---':
@@ -51,15 +107,12 @@ def parse_yaml_header(file_path):
         if yaml_end == -1:
             return {'title': file_path.name, 'file': file_path.name}
 
-        # Parse YAML lines (simple parsing for basic key: value pairs)
         metadata = {'file': file_path.name}
         for line in lines[1:yaml_end]:
             line = line.strip()
             if ':' in line:
                 key, value = line.split(':', 1)
-                key = key.strip()
-                value = value.strip()
-                metadata[key] = value
+                metadata[key.strip()] = value.strip()
 
         return metadata
 
@@ -67,28 +120,17 @@ def parse_yaml_header(file_path):
         return {'title': file_path.name, 'file': file_path.name, 'error': str(e)}
 
 
-def read_note(notes_dir, note_id):
-    """Read and display the content of a specific note."""
-    # Find the note file
-    notes_subdir = notes_dir / "notes"
-    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
-
-    note_file = None
-    for search_dir in search_dirs:
-        candidate = search_dir / note_id
-        if candidate.exists():
-            note_file = candidate
-            break
-
+def read_note(notes_dir, identifier):
+    """Read and display a note by index number or filename."""
+    note_file = resolve_to_path(notes_dir, identifier)
     if not note_file:
-        print(f"Error: Note '{note_id}' not found.")
+        print(f"Error: Note '{identifier}' not found.")
         return False
 
-    # Read and display the note
     try:
         with open(note_file, 'r', encoding='utf-8') as f:
             content = f.read()
-        print(f"\nContent of {note_id}:")
+        print(f"\nContent of {note_file.name}:")
         print("=" * 60)
         print(content)
         input("Press Enter to return to list...")
@@ -100,7 +142,6 @@ def read_note(notes_dir, note_id):
 
 def create_note(notes_dir):
     """Create a new note by opening it in the default editor."""
-    # Ensure notes directory exists
     notes_subdir = notes_dir / "notes"
     if not notes_subdir.exists():
         try:
@@ -110,13 +151,10 @@ def create_note(notes_dir):
             print(f"Error creating notes directory: {e}")
             return False
 
-    # Generate filename with timestamp
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    temp_filename = f"note_{timestamp}.md"
-    temp_file = notes_subdir / temp_filename
+    temp_file = notes_subdir / f"note_{timestamp}.md"
 
-    # Create template content
     template_content = f"""---
 title: 
 created: {datetime.now().isoformat()}
@@ -131,7 +169,6 @@ priority:
 Write your note content here.
 """
 
-    # Write the template file
     try:
         with open(temp_file, 'w', encoding='utf-8') as f:
             f.write(template_content)
@@ -139,15 +176,9 @@ Write your note content here.
         print(f"Error creating note file: {e}")
         return False
 
-    # Open in default editor
     editor = os.environ.get('EDITOR', 'vi')
-    try:
-        os.system(f"{editor} {temp_file}")
-    except Exception as e:
-        print(f"Error opening editor: {e}")
-        return False
+    os.system(f"{editor} {temp_file}")
 
-    # After editing, read the title and rename the file
     try:
         metadata = parse_yaml_header(temp_file)
         title = metadata.get('title', '').strip()
@@ -155,83 +186,53 @@ Write your note content here.
             print("Warning: No title provided. Keeping temporary filename.")
             final_file = temp_file
         else:
-            # Sanitize title for filename
-            #import re
-            #filename = re.sub(r'[^\w\-_\.]', '_', title.lower().replace(' ', '_'))
-            filename = slugify.slugify(title)
-            filename = f"{filename}.md"
+            filename = slugify.slugify(title) + ".md"
             final_file = notes_subdir / filename
-
-            # Check if file already exists
             counter = 1
             while final_file.exists() and final_file != temp_file:
                 base, ext = filename.rsplit('.', 1)
                 filename = f"{base}_{counter}.{ext}"
                 final_file = notes_subdir / filename
                 counter += 1
-
-            # Rename the file
             if final_file != temp_file:
                 temp_file.rename(final_file)
 
-        print(f"Note saved: {final_file}")
+        # Show the index the new note was assigned
+        note_files = collect_note_files(notes_dir)
+        _, file_to_id = build_index(note_files)
+        assigned_id = file_to_id.get(final_file, "?")
+        print(f"Note saved: {final_file.name}  [index: {assigned_id}]")
         return True
     except Exception as e:
         print(f"Error processing note: {e}")
         return False
 
 
-def edit_note(notes_dir, note_id):
-    """Edit an existing note by opening it in the default editor."""
-    # Find the note file
-    notes_subdir = notes_dir / "notes"
-    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
-
-    note_file = None
-    for search_dir in search_dirs:
-        candidate = search_dir / note_id
-        if candidate.exists():
-            note_file = candidate
-            break
-
+def edit_note(notes_dir, identifier):
+    """Edit a note by index number or filename."""
+    note_file = resolve_to_path(notes_dir, identifier)
     if not note_file:
-        print(f"Error: Note '{note_id}' not found.")
+        print(f"Error: Note '{identifier}' not found.")
         return False
 
-    # Open in default editor
     editor = os.environ.get('EDITOR', 'vi')
-    try:
-        os.system(f"{editor} {note_file}")
-        print(f"Note edited: {note_file}")
-        return True
-    except Exception as e:
-        print(f"Error opening editor: {e}")
-        return False
+    os.system(f"{editor} {note_file}")
+    print(f"Note edited: {note_file.name}")
+    return True
 
 
-def delete_note(notes_dir, note_id):
-    """Delete an existing note after confirmation."""
-    # Find the note file
-    notes_subdir = notes_dir / "notes"
-    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
-
-    note_file = None
-    for search_dir in search_dirs:
-        candidate = search_dir / note_id
-        if candidate.exists():
-            note_file = candidate
-            break
-
+def delete_note(notes_dir, identifier):
+    """Delete a note (by index or filename) after confirmation."""
+    note_file = resolve_to_path(notes_dir, identifier)
     if not note_file:
-        print(f"Error: Note '{note_id}' not found.")
+        print(f"Error: Note '{identifier}' not found.")
         return False
 
-    # Ask for confirmation
-    confirm = input(f"Are you sure you want to delete '{note_id}'? (y/N): ").strip().lower()
-    if confirm == 'y' or confirm == 'yes':
+    confirm = input(f"Are you sure you want to delete '{note_file.name}'? (y/N): ").strip().lower()
+    if confirm in ('y', 'yes'):
         try:
             note_file.unlink()
-            print(f"Note deleted: {note_id}")
+            print(f"Note deleted: {note_file.name}")
             return True
         except Exception as e:
             print(f"Error deleting note: {e}")
@@ -243,53 +244,44 @@ def delete_note(notes_dir, note_id):
 
 def list_notes(notes_dir):
     """Interactively list and browse notes with pagination."""
-    # Check if notes directory exists
     if not notes_dir.exists():
         print(f"Error: Notes directory does not exist: {notes_dir}", file=sys.stderr)
         print("Create it with: mkdir -p ~/.notes/notes", file=sys.stderr)
-        print("Then copy test notes: cp test-notes/*.md ~/.notes/notes/", file=sys.stderr)
         return False
 
-    # Look for notes in the notes directory (or directly in .notes)
-    notes_subdir = notes_dir / "notes"
-    search_dirs = [notes_subdir] if notes_subdir.exists() else [notes_dir]
-
-    # Find all note files (*.md, *.note, *.txt)
-    note_files = []
-    for search_dir in search_dirs:
-        note_files.extend(search_dir.glob("*.md"))
-        note_files.extend(search_dir.glob("*.note"))
-        note_files.extend(search_dir.glob("*.txt"))
+    note_files = collect_note_files(notes_dir)
 
     if not note_files:
         print(f"No notes found in {notes_dir}")
-        print("Copy test notes with: cp test-notes/*.md ~/.notes/", file=sys.stderr)
         return True
 
-    note_files = sorted(note_files)
+    # Build the session index once so display and selection are consistent
+    id_to_file, _ = build_index(note_files)
+
     total_notes = len(note_files)
     items_per_page = 10
     total_pages = (total_notes + items_per_page - 1) // items_per_page
     current_page = 1
 
     while True:
-        # Display current page
         start_index = (current_page - 1) * items_per_page
         end_index = start_index + items_per_page
-        page_notes = note_files[start_index:end_index]
+        # Slice using the ordered id list so page numbers match index numbers
+        page_ids = list(id_to_file.keys())[start_index:end_index]
 
         print(f"\nNotes in {notes_dir} (Page {current_page} of {total_pages}):")
         print("=" * 60)
-        for i, note_file in enumerate(page_notes, start=1):
+        for note_id in page_ids:
+            note_file = id_to_file[note_id]
             metadata = parse_yaml_header(note_file)
-            title = metadata.get('title', note_file.name)
-            created = metadata.get('created', 'N/A')
+            title    = metadata.get('title', note_file.name)
+            created  = metadata.get('created', 'N/A')
             modified = metadata.get('modified', 'N/A')
-            tags = metadata.get('tags', '')
-            author = metadata.get('author', 'N/A')
+            tags     = metadata.get('tags', '')
+            author   = metadata.get('author', '')
             priority = metadata.get('priority', '')
 
-            print(f"{i}. {note_file.name}")
+            print(f"[{note_id}] {note_file.name}")
             print(f"   Title: {title}")
             if created != 'N/A':
                 print(f"   Created: {created}")
@@ -303,10 +295,9 @@ def list_notes(notes_dir):
                 print(f"   Priority: {priority}")
             print()
 
-        print(f"Page {current_page}/{total_pages} - {len(page_notes)} notes shown. {len(note_files)} Total notes in folder")
-
-        # Prompt for user input
-        prompt = input("Enter number to select note, 'n' for next page, 'p' for previous, 'q' to quit: ").strip().lower()
+        print(f"Page {current_page}/{total_pages} — {len(page_ids)} shown, {total_notes} total")
+        print("Enter an index number to read that note, 'n' next, 'p' previous, 'q' quit.")
+        prompt = input("> ").strip().lower()
 
         if prompt == 'q':
             break
@@ -322,56 +313,50 @@ def list_notes(notes_dir):
                 print("Already on first page.")
         else:
             try:
-                num = int(prompt)
-                if 1 <= num <= len(page_notes):
-                    selected_file = page_notes[num - 1]
-                    selected_id = selected_file.name
-                    read_note(notes_dir, selected_id)
+                chosen_id = int(prompt)
+                if chosen_id in id_to_file:
+                    read_note(notes_dir, str(chosen_id))
                 else:
-                    print("Invalid number. Please enter a number between 1 and", len(page_notes))
+                    print(f"No note with index {chosen_id}. Valid range: 1–{total_notes}")
             except ValueError:
-                print("Invalid input. Please enter a number, 'n', 'p', or 'q'.")
+                print("Invalid input. Enter a number, 'n', 'p', or 'q'.")
 
     return True
 
 
 def show_help():
-    """Display help information."""
     help_text = """
 Future Proof Notes Manager v0.1
 
 Usage: python3 mindwriter.py [command]
 
 Available commands:
---help                     # Display help information
-create                     # Create a new note (opens in default editor)
-list                       # Interactively list and browse notes (paginated, 10 per page)
-read <note-id>             # Display a specific note
-edit <note-id>             # Edit a specific note
-delete <note-id>           # Delete a specific note, asks confirmation before removal
-search "query"             # Search notes for text (title, tags, content)
-stats                      # Display statistics about your notes
-shell                      # Run interactive terminal shell
+  --help                     Display this help information
+  create                     Create a new note (opens in default editor)
+  list                       Interactively list and browse notes (paginated)
+  read  <index|note-id>      Display a note by index number or filename
+  edit  <index|note-id>      Edit a note by index number or filename
+  delete <index|note-id>     Delete a note by index number or filename
+  search "query"             Search notes for text (title, tags, content)
+  stats                      Display statistics about your notes
+  shell                      Run interactive terminal shell
+
+Index numbers are assigned alphabetically at runtime — use 'list' to see them.
+They are stable within a session as long as no notes are added or removed.
 
 Notes directory: {}
-
     """.format(Path.home() / ".notes")
     print(help_text.strip())
 
 
 def finish(exit_code=0):
-    """Clean up and exit the application."""
     sys.exit(exit_code)
 
 
 def main():
-    """Main entry point for the notes CLI application."""
-    # Setup
     notes_dir = setup()
 
-    # Parse command-line arguments
     if len(sys.argv) < 2:
-        # No command provided
         print("Error: No command provided.", file=sys.stderr)
         print("Usage: python3 mindwriter.py [command]", file=sys.stderr)
         print("Try 'python3 mindwriter.py help' for more information.", file=sys.stderr)
@@ -379,37 +364,28 @@ def main():
 
     command = sys.argv[1].lower()
 
-    # Process command
-    if command == "help":
+    if command in ("help", "--help"):
         show_help()
         finish(0)
     elif command == "list":
-        success = list_notes(notes_dir)
-        finish(0 if success else 1)
+        finish(0 if list_notes(notes_dir) else 1)
     elif command == "read":
         if len(sys.argv) < 3:
-            print("Error: read requires a note-id.", file=sys.stderr)
+            print("Error: read requires a note index or filename.", file=sys.stderr)
             finish(1)
-        note_id = sys.argv[2]
-        success = read_note(notes_dir, note_id)
-        finish(0 if success else 1)
+        finish(0 if read_note(notes_dir, sys.argv[2]) else 1)
     elif command == "create":
-        success = create_note(notes_dir)
-        finish(0 if success else 1)
+        finish(0 if create_note(notes_dir) else 1)
     elif command == "edit":
         if len(sys.argv) < 3:
-            print("Error: edit requires a note-id.", file=sys.stderr)
+            print("Error: edit requires a note index or filename.", file=sys.stderr)
             finish(1)
-        note_id = sys.argv[2]
-        success = edit_note(notes_dir, note_id)
-        finish(0 if success else 1)
+        finish(0 if edit_note(notes_dir, sys.argv[2]) else 1)
     elif command == "delete":
         if len(sys.argv) < 3:
-            print("Error: delete requires a note-id.", file=sys.stderr)
+            print("Error: delete requires a note index or filename.", file=sys.stderr)
             finish(1)
-        note_id = sys.argv[2]
-        success = delete_note(notes_dir, note_id)
-        finish(0 if success else 1)
+        finish(0 if delete_note(notes_dir, sys.argv[2]) else 1)
     elif command == "shell":
         mindwriter_shell.main()
     else:
