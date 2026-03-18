@@ -207,6 +207,60 @@ Write your note content here.
         print(f"Error processing note: {e}")
         return False
 
+def update_modified_timestamp(file_path):
+    """
+    Rewrite the 'modified' field in the YAML front matter to the current
+    datetime.  If no 'modified' key exists in the header it is inserted on
+    the line after 'created' (or just before the closing ---).
+    If the file has no YAML front matter at all, the file is left unchanged
+    and a warning is printed.
+    """
+    from datetime import datetime
+ 
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+    except Exception as e:
+        print(f"Warning: could not read '{file_path.name}' to update timestamp: {e}")
+        return
+ 
+    # Must start with a YAML block
+    if not lines or lines[0].strip() != '---':
+        print(f"Warning: '{file_path.name}' has no YAML front matter — 'modified' not updated.")
+        return
+ 
+    # Locate closing ---
+    yaml_end = -1
+    for i in range(1, len(lines)):
+        if lines[i].strip() == '---':
+            yaml_end = i
+            break
+ 
+    if yaml_end == -1:
+        print(f"Warning: '{file_path.name}' YAML block is not closed — 'modified' not updated.")
+        return
+ 
+    now_iso = datetime.now().isoformat()
+    new_modified_line = f"modified: {now_iso}\n"
+    modified_found = False
+ 
+    # Try to update an existing 'modified:' line inside the header
+    for i in range(1, yaml_end):
+        key = lines[i].split(':', 1)[0].strip() if ':' in lines[i] else ''
+        if key == 'modified':
+            lines[i] = new_modified_line
+            modified_found = True
+            break
+ 
+    # If no 'modified' key existed, insert one before the closing ---
+    if not modified_found:
+        lines.insert(yaml_end, new_modified_line)
+ 
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+    except Exception as e:
+        print(f"Warning: could not write updated timestamp to '{file_path.name}': {e}")
 
 def edit_note(notes_dir, identifier):
     """Edit a note by index number or filename."""
@@ -217,6 +271,7 @@ def edit_note(notes_dir, identifier):
 
     editor = os.environ.get('EDITOR', 'vi')
     os.system(f"{editor} {note_file}")
+    update_modified_timestamp(note_file)
     print(f"Note edited: {note_file.name}")
     return True
 
