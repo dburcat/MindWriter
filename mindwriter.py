@@ -774,6 +774,243 @@ def show_stats(notes_dir):
 
 
 # ---------------------------------------------------------------------------
+# Dataset import
+# ---------------------------------------------------------------------------
+
+DATASETS_SUBDIR = "datasets"
+
+
+def datasets_dir(notes_dir):
+    """Return the datasets subdirectory path."""
+    return notes_dir / DATASETS_SUBDIR
+
+
+def _ensure_datasets_dir(notes_dir):
+    d = datasets_dir(notes_dir)
+    if not d.exists():
+        try:
+            d.mkdir(parents=True)
+        except Exception as e:
+            print(f"Error creating datasets directory: {e}")
+            return None
+    return d
+
+
+def _write_sidecar(data_file, meta):
+    """
+    Write a YAML sidecar file next to *data_file*.
+    Sidecar name = data_file.stem + ".dataset.yaml"
+    e.g.  sales.csv  ->  sales.csv.yaml
+    """
+    sidecar_path = data_file.parent / (data_file.stem + ".dataset.yaml")
+    lines = ["---\n"]
+    for key, value in meta.items():
+        if isinstance(value, list):
+            items = ", ".join(str(v) for v in value)
+            lines.append(f"{key}: [{items}]\n")
+        else:
+            lines.append(f"{key}: {value}\n")
+    lines.append("---\n")
+    try:
+        with open(sidecar_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        return sidecar_path
+    except Exception as e:
+        print(f"Warning: could not write sidecar: {e}")
+        return None
+
+
+def read_dataset_sidecar(data_file):
+    """Read the YAML sidecar for *data_file*. Returns a dict (empty if missing)."""
+    sidecar_path = data_file.parent / (data_file.stem + ".dataset.yaml")
+    if not sidecar_path.exists():
+        return {}
+    meta = {}
+    try:
+        with open(sidecar_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        if not lines or lines[0].strip() != "---":
+            return {}
+        yaml_end = -1
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                yaml_end = i
+                break
+        end = yaml_end if yaml_end != -1 else len(lines)
+        for line in lines[1:end]:
+            line = line.strip()
+            if ":" in line:
+                key, value = line.split(":", 1)
+                meta[key.strip()] = value.strip()
+    except Exception:
+        pass
+    return meta
+
+
+def _collect_datasets(notes_dir):
+    """Return sorted list of dataset Paths (csv + json) in the datasets dir."""
+    d = datasets_dir(notes_dir)
+    if not d.exists():
+        return []
+    return sorted(list(d.glob("*.csv")) + list(d.glob("*.json")))
+
+
+def import_dataset(notes_dir, source_path_str):
+    """
+    Import a CSV or JSON file into the datasets directory, collect metadata
+    interactively, then write a YAML sidecar alongside the copied file.
+    The original file is copied — never moved or modified.
+    """
+    import shutil, csv, json
+    from datetime import datetime
+
+    source = Path(source_path_str)
+    if not source.exists():
+        print(f"Error: File not found: {source}")
+        return False
+
+    suffix = source.suffix.lower()
+    if suffix not in (".csv", ".json"):
+        print(f"Error: Only .csv and .json files are supported (got \'{suffix}\').")
+        return False
+
+    ddir = _ensure_datasets_dir(notes_dir)
+    if ddir is None:
+        return False
+
+    # -- introspect the source file -------------------------------------------
+    row_count, columns, parse_error = 0, [], None
+    try:
+        if suffix == ".csv":
+            with open(source, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                columns = list(reader.fieldnames or [])
+                for _ in reader:
+                    row_count += 1
+        else:
+            with open(source, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                row_count = len(data)
+                if data and isinstance(data[0], dict):
+                    columns = list(data[0].keys())
+            elif isinstance(data, dict):
+                row_count, columns = 1, list(data.keys())
+    except Exception as e:
+        parse_error = str(e)
+
+    print(f"\nImporting: {source.name}")
+    print("=" * 60)
+    if parse_error:
+        print(f"  Warning: could not fully parse file -- {parse_error}")
+    else:
+        print(f"  Rows   : {row_count:,}")
+        print(f"  Columns: {len(columns)}")
+        if columns:
+            col_preview = ", ".join(columns[:10]) + (" ..." if len(columns) > 10 else "")
+            print(f"  Fields : {col_preview}")
+    print()
+
+    # -- collect metadata interactively ---------------------------------------
+    def prompt(label, default=""):
+        suffix_hint = f" [{default}]" if default else ""
+        val = input(f"  {label}{suffix_hint}: ").strip()
+        return val if val else default
+
+    print("Enter metadata (press Enter to skip a field):")
+    title       = prompt("Title",       source.stem.replace("_", " ").replace("-", " "))
+    description = prompt("Description", "")
+    author      = prompt("Author",      "").lower()
+    tags_raw    = prompt("Tags (comma-separated)", "").lower()
+    tags        = [t.strip() for t in tags_raw.split(",") if t.strip()]
+    source_url  = prompt("Source URL",  "")
+    license_    = prompt("License",     "")
+    priority    = prompt("Priority",    "")
+
+    now = datetime.now().isoformat()
+    meta = {
+        "title":             title.lower(),
+        "description":       description,
+        "author":            author,
+        "tags":              tags,
+        "source_url":        source_url,
+        "license":           license_,
+        "priority":          priority,
+        "format":            suffix.lstrip(".").upper(),
+        "rows":              row_count,
+        "columns":           len(columns),
+        "fields":            columns,
+        "imported":          now,
+        "modified":          now,
+        "original_filename": source.name,
+    }
+    meta = {k: v for k, v in meta.items() if v != "" and v != [] and v != 0}
+
+    # -- copy file to datasets dir --------------------------------------------
+    dest = ddir / source.name
+    counter = 1
+    while dest.exists():
+        dest = ddir / f"{source.stem}_{counter}{source.suffix}"
+        counter += 1
+
+    try:
+        shutil.copy2(source, dest)
+    except Exception as e:
+        print(f"Error copying file: {e}")
+        return False
+
+    sidecar = _write_sidecar(dest, meta)
+    print()
+    print(f"Dataset saved  : {dest.name}")
+    if sidecar:
+        print(f"Sidecar written: {sidecar.name}")
+    return True
+
+
+def list_datasets(notes_dir):
+    """List all imported datasets with their sidecar metadata."""
+    if not notes_dir.exists():
+        print(f"Error: Notes directory does not exist: {notes_dir}", file=sys.stderr)
+        return False
+
+    datasets = _collect_datasets(notes_dir)
+    if not datasets:
+        print("No datasets found. Use \'dataset-import <file>\' to add one.")
+        return True
+
+    print(f"\nDatasets ({len(datasets)} total):")
+    print("=" * 60)
+    for i, ds in enumerate(datasets, start=1):
+        meta        = read_dataset_sidecar(ds)
+        title       = meta.get("title", ds.stem)
+        description = meta.get("description", "")
+        author      = meta.get("author", "")
+        tags        = meta.get("tags", "")
+        fmt         = meta.get("format", ds.suffix.lstrip(".").upper())
+        rows        = meta.get("rows", "?")
+        cols        = meta.get("columns", "?")
+        imported    = meta.get("imported", "")[:10]
+        modified    = meta.get("modified", "")[:10]
+
+        print(f"[{i}] {ds.name}  ({fmt})")
+        print(f"   Title      : {title}")
+        if description:
+            print(f"   Description: {description}")
+        if author:
+            print(f"   Author     : {author}")
+        if tags:
+            print(f"   Tags       : {tags}")
+        print(f"   Rows/Cols  : {rows} rows x {cols} columns")
+        if imported:
+            print(f"   Imported   : {imported}")
+        if modified and modified != imported:
+            print(f"   Modified   : {modified}")
+        print()
+
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Help / finish
 # ---------------------------------------------------------------------------
 
@@ -793,6 +1030,8 @@ Available commands:
   search <kw> [kw2 ...]      Search notes by keyword(s) — matches title, tags, body, filename
                              A note appears if ANY keyword matches (OR logic)
   stats                      Display statistics about your notes
+  dataset-import <file>      Import a .csv or .json file and write a YAML sidecar
+  dataset-list               List all imported datasets with their metadata
   shell                      Run interactive terminal shell
 
 Index numbers are assigned alphabetically at runtime — use 'list' to see them.
@@ -853,6 +1092,14 @@ def main():
             finish(1)
         keywords = sys.argv[2:]
         finish(0 if search_notes(notes_dir, keywords) else 1)
+    elif command == "dataset-import":
+        if len(sys.argv) < 3:
+            print("Error: dataset-import requires a file path.", file=sys.stderr)
+            print("Usage: mindwriter.py dataset-import <file.csv|file.json>", file=sys.stderr)
+            finish(1)
+        finish(0 if import_dataset(notes_dir, sys.argv[2]) else 1)
+    elif command == "dataset-list":
+        finish(0 if list_datasets(notes_dir) else 1)
     elif command == "shell":
         mindwriter_shell.main()
     else:
