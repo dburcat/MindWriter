@@ -129,10 +129,14 @@ Available commands:
 help                     # Display help information
 create                     # Create a new note (opens in default editor)
 list                       # Interactively list and browse notes (paginated, 10 per page)
-read <note-id>             # Display a specific note
-edit <note-id>             # Edit a specific note
-delete <note-id>           # Delete a specific note, asks confirmation before removal
-search "query"             # Search notes for text (title, tags, content)
+read 
+    <note-id>             # Display a specific note
+edit 
+    <note-id>             # Edit a specific note
+delete 
+    <note-id>           # Delete a specific note, asks confirmation before removal
+search 
+    <keyword>             # Search notes for text (title, tags, content)
 stats                      # Display statistics about your notes
 
 Notes directory: {}
