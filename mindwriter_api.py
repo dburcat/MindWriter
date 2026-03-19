@@ -1070,6 +1070,43 @@ def get_dataset_data(dataset_id):
 
 
 # ---------------------------------------------------------------------------
+# Browser keep-alive — shutdown when the tab/window closes
+# ---------------------------------------------------------------------------
+# The UI sends GET /ping every 5 seconds while it is open.
+# A watchdog thread watches the timestamp of the last ping; if more than
+# SHUTDOWN_TIMEOUT seconds pass with no ping the server calls os._exit(0).
+# os._exit bypasses Python's normal shutdown so it works even inside Flask's
+# Werkzeug dev server which catches SystemExit.
+
+import time as _time
+
+_last_ping    = _time.monotonic()
+PING_INTERVAL = 5     # seconds between browser pings
+SHUTDOWN_TIMEOUT = 15  # seconds of silence before shutdown
+
+
+@app.route("/ping")
+def ping():
+    """Heartbeat called by the UI every few seconds."""
+    global _last_ping
+    _last_ping = _time.monotonic()
+    return jsonify({"ok": True})
+
+
+def _watchdog():
+    """Background thread — exits the process when pings stop."""
+    # Give the browser time to open and send its first ping
+    _time.sleep(SHUTDOWN_TIMEOUT)
+    while True:
+        _time.sleep(2)
+        silence = _time.monotonic() - _last_ping
+        if silence > SHUTDOWN_TIMEOUT:
+            print(f"\nNo ping for {silence:.0f}s — browser tab closed. Shutting down.")
+            os._exit(0)
+
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1096,5 +1133,10 @@ if __name__ == "__main__":
 
     if not debug:
         threading.Thread(target=open_browser, daemon=True).start()
+
+    # Start watchdog — shuts down when the browser tab closes
+    threading.Thread(target=_watchdog, daemon=True).start()
+    print(f"  Auto-shutdown after {SHUTDOWN_TIMEOUT}s with no browser activity.")
+    print()
 
     app.run(host="0.0.0.0", port=port, debug=debug)

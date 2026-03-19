@@ -1179,6 +1179,12 @@ function showUploadForm() {
 // ── boot ──────────────────────────────────────────────────────────────────
 checkHealth();
 loadNotes();
+
+// Keep-alive ping — tells the server the tab is still open.
+// The server shuts itself down if pings stop arriving.
+setInterval(() => {
+  fetch(api() + '/ping').catch(() => {});  // silent — don't show errors if server is gone
+}, 5000);
 </script>
 </body>
 </html>
