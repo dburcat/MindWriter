@@ -245,6 +245,29 @@ def _parse_tags(raw: str) -> list:
     return [t.strip().lower() for t in raw.strip("[]").split(",") if t.strip()]
 
 
+def _existing_dataset_titles() -> dict:
+    """Return a dict of {normalised_title: filename} for all current datasets."""
+    titles = {}
+    for ds in _collect_datasets(_notes_root()):
+        meta  = read_dataset_sidecar(ds)
+        title = meta.get("title", ds.stem).strip().lower()
+        if title:
+            titles[title] = ds.name
+    return titles
+
+
+def _check_duplicate_dataset_title(title: str) -> None:
+    """Abort with 409 if a dataset with this title already exists."""
+    normalised = title.strip().lower()
+    existing   = _existing_dataset_titles()
+    if normalised in existing:
+        abort(409, description=(
+            f"A dataset titled '{normalised}' already exists "
+            f"(file: {existing[normalised]}). "
+            "Choose a different title."
+        ))
+
+
 def _note_to_dict(note_id: int, note_file: Path, include_body: bool = False) -> dict:
     meta = parse_yaml_header(note_file)
     d = {
@@ -819,9 +842,13 @@ def import_dataset():
     tags_raw = data.get("tags", "")
     tags = [t.strip().lower() for t in (tags_raw if isinstance(tags_raw, list) else tags_raw.split(",")) if str(t).strip()]
 
+    # Duplicate title check
+    candidate_title = (data.get("title") or source.stem.replace("_", " ").replace("-", " ")).lower()
+    _check_duplicate_dataset_title(candidate_title)
+
     now = datetime.now().isoformat()
     meta = {
-        "title":             (data.get("title") or source.stem.replace("_", " ").replace("-", " ")).lower(),
+        "title":             candidate_title,
         "description":       data.get("description", ""),
         "author":            (data.get("author") or "").lower(),
         "tags":              tags,
@@ -899,6 +926,10 @@ def create_dataset():
         abort(400, description="'format' must be 'csv' or 'json'.")
     if fmt == "csv" and not columns:
         abort(400, description="'columns' is required when format is 'csv'.")
+
+    # Duplicate title check
+    candidate_title = (data.get("title") or name.replace("_", " ").replace("-", " ")).lower()
+    _check_duplicate_dataset_title(candidate_title)
 
     # Sanitise filename
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
@@ -1053,8 +1084,12 @@ def upload_dataset():
         tags     = [t.strip().lower() for t in tags_raw.split(",") if t.strip()]
         now      = datetime.now().isoformat()
 
+        # Duplicate title check
+        candidate_title = (request.form.get("title") or stem.replace("_", " ").replace("-", " ")).lower()
+        _check_duplicate_dataset_title(candidate_title)
+
         meta = {
-            "title":             (request.form.get("title") or stem.replace("_"," ").replace("-"," ")).lower(),
+            "title":             candidate_title,
             "description":       request.form.get("description", ""),
             "author":            request.form.get("author", "").lower(),
             "tags":              tags,

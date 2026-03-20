@@ -287,7 +287,8 @@ mark{background:rgba(184,240,80,.28);color:var(--text);border-radius:2px;padding
   <!-- sidebar -->
   <aside id="aside-notes">
     <div class="aside-head">
-      <button class="btn-new" id="btn-new-note">+ New Note</button>
+      <button class="btn-new" id="btn-new-note" style="width:100%">+ New Note</button>
+      <button class="btn-new" id="btn-upload-note" style="width:100%;background:var(--surf2);color:var(--text);border:1px solid var(--border)">⬆ Upload Note</button>
       <input id="filter-tag"    placeholder="Filter by tag…"/>
       <input id="filter-author" placeholder="Filter by author…"/>
       <select id="sort-by">
@@ -308,6 +309,35 @@ mark{background:rgba(184,240,80,.28);color:var(--text);border-radius:2px;padding
       <!-- reader -->
       <div id="note-reader">
         <div class="empty-pane"><div class="big">◎</div><div>Select a note or create a new one</div></div>
+      </div>
+
+      <!-- upload note panel -->
+      <div id="note-upload-panel" style="display:none;flex:1;overflow-y:auto;padding:28px 32px;flex-direction:column;gap:14px">
+        <div class="form-hd">⬆ Upload Note</div>
+        <div style="font-size:12px;color:var(--dim);line-height:1.6">
+          Upload a <code style="font-family:var(--mono);font-size:11px;color:var(--accent)">.md</code>,
+          <code style="font-family:var(--mono);font-size:11px;color:var(--accent)">.txt</code>, or
+          <code style="font-family:var(--mono);font-size:11px;color:var(--accent)">.note</code> file.
+          If the file has no YAML front matter a header will be added automatically.
+        </div>
+        <div class="drop-zone" id="note-drop-zone">
+          <input type="file" id="note-file-input" accept=".md,.txt,.note"/>
+          <div class="dz-icon">⬆</div>
+          <div class="dz-label">Drop a note file here or <b>click to browse</b></div>
+          <div class="dz-chosen" id="note-dz-chosen"></div>
+        </div>
+        <div id="note-upload-preview" class="up-preview"></div>
+        <div class="f-row" style="flex-direction:row;align-items:center;gap:10px">
+          <input type="checkbox" id="note-overwrite" style="width:14px;height:14px;accent-color:var(--accent)"/>
+          <label for="note-overwrite" style="font-size:12px;color:var(--dim);cursor:pointer">
+            Replace existing note if filename already exists
+          </label>
+        </div>
+        <div class="f-actions">
+          <button class="btn"       id="note-upload-submit">Upload Note</button>
+          <button class="btn-ghost" id="note-upload-cancel">Cancel</button>
+        </div>
+        <div class="f-msg" id="note-upload-msg"></div>
       </div>
 
       <!-- create / edit form -->
@@ -432,8 +462,21 @@ const noteReader = document.getElementById('note-reader');
 const formPanel  = document.getElementById('note-form-panel');
 let   activeNote = null; // {id, filename, ...}
 
-function showReader()  { noteReader.style.display='flex'; formPanel.style.display='none'; }
-function showForm()    { noteReader.style.display='none'; formPanel.style.display='flex'; }
+function showReader()  {
+  noteReader.style.display='flex';
+  formPanel.style.display='none';
+  document.getElementById('note-upload-panel').style.display='none';
+}
+function showForm()    {
+  noteReader.style.display='none';
+  formPanel.style.display='flex';
+  document.getElementById('note-upload-panel').style.display='none';
+}
+function showUploadNotePanel() {
+  noteReader.style.display='none';
+  formPanel.style.display='none';
+  document.getElementById('note-upload-panel').style.display='flex';
+}
 function clearForm()   { ['f-title','f-body','f-author','f-priority','f-tags'].forEach(id=>document.getElementById(id).value=''); showMsg('',''); }
 
 function showMsg(text, type) {
@@ -526,6 +569,99 @@ document.getElementById('sort-by').addEventListener('change', loadNotes);
 // ── new note ──────────────────────────────────────────────────────────────
 let formMode = 'create'; // 'create' | 'edit'
 let editId   = null;
+
+// ── upload note ──────────────────────────────────────────────────────────────
+document.getElementById('btn-upload-note').addEventListener('click', () => {
+  document.querySelectorAll('.note-row').forEach(r => r.classList.remove('sel'));
+  // Reset panel state
+  document.getElementById('note-file-input').value = '';
+  document.getElementById('note-file-input')._dropped = null;
+  document.getElementById('note-dz-chosen').style.display = 'none';
+  document.getElementById('note-upload-preview').style.display = 'none';
+  document.getElementById('note-upload-msg').style.display = 'none';
+  document.getElementById('note-overwrite').checked = false;
+  showUploadNotePanel();
+});
+
+(function wireNoteUpload() {
+  const fileInput = document.getElementById('note-file-input');
+  const dropZone  = document.getElementById('note-drop-zone');
+  const chosen    = document.getElementById('note-dz-chosen');
+  const preview   = document.getElementById('note-upload-preview');
+
+  function handleNoteFile(file) {
+    if (!file) return;
+    chosen.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+    chosen.style.display = 'block';
+    // Show a snippet of the file content
+    const reader = new FileReader();
+    reader.onload = e => {
+      const text = e.target.result;
+      const lines = text.split('\n').slice(0, 6).join('\n');
+      preview.textContent = lines + (text.split('\n').length > 6 ? '\n…' : '');
+      preview.style.display = 'block';
+    };
+    reader.readAsText(file.slice(0, 2048));
+  }
+
+  fileInput.addEventListener('change', () => handleNoteFile(fileInput.files[0]));
+  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag');
+    const f = e.dataTransfer.files[0];
+    if (f) { fileInput._dropped = f; handleNoteFile(f); }
+  });
+
+  document.getElementById('note-upload-cancel').addEventListener('click', () => {
+    showReader();
+    if (activeNote) openNote(activeNote.id);
+  });
+
+  document.getElementById('note-upload-submit').addEventListener('click', async () => {
+    const file    = fileInput._dropped || fileInput.files[0];
+    const msgEl   = document.getElementById('note-upload-msg');
+    const submitBtn = document.getElementById('note-upload-submit');
+
+    if (!file) {
+      msgEl.textContent = 'Please select a file first.';
+      msgEl.className = 'f-msg err'; msgEl.style.display = 'block'; return;
+    }
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['md','txt','note'].includes(ext)) {
+      msgEl.textContent = 'Only .md, .txt, and .note files are supported.';
+      msgEl.className = 'f-msg err'; msgEl.style.display = 'block'; return;
+    }
+
+    submitBtn.disabled = true; submitBtn.textContent = 'Uploading…';
+    msgEl.style.display = 'none';
+
+    const form = new FormData();
+    form.append('file', file);
+    form.append('overwrite', document.getElementById('note-overwrite').checked ? 'true' : 'false');
+
+    try {
+      const res = await fetch(api() + '/api/notes/upload', {
+        method: 'POST',
+        headers: {'X-API-Key': apiKey()},
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+
+      const hint = data.had_front_matter ? '' : ' (front matter added automatically)';
+      msgEl.textContent = 'Uploaded: ' + data.filename + hint;
+      msgEl.className = 'f-msg ok'; msgEl.style.display = 'block';
+
+      await loadNotes();
+      setTimeout(() => { showReader(); openNote(data.id); }, 600);
+    } catch(e) {
+      msgEl.textContent = e.message; msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+    } finally {
+      submitBtn.disabled = false; submitBtn.textContent = 'Upload Note';
+    }
+  });
+})();
 
 document.getElementById('btn-new-note').addEventListener('click', () => {
   formMode = 'create';
