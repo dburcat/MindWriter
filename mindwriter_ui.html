@@ -1121,10 +1121,14 @@ function showUploadForm() {
       '<div class="empty-pane"><div class="big">◎</div><div>Select a dataset or upload a new one</div></div>';
   });
 
-  document.getElementById('ds-submit').addEventListener('click', async () => {
+  let _activeXhr     = null;   // current upload XHR so Cancel can abort it
+  let _activeUploadId = null;  // upload_id sent to server for server-side cancel
+
+  document.getElementById('ds-submit').addEventListener('click', () => {
     const file = fileInput._droppedFile || fileInput.files[0];
-    const msgEl = document.getElementById('ds-msg');
-    const submitBtn = document.getElementById('ds-submit');
+    const msgEl      = document.getElementById('ds-msg');
+    const submitBtn  = document.getElementById('ds-submit');
+    const cancelBtn  = document.getElementById('ds-cancel');
     const progressWrap = document.getElementById('up-progress');
     const progressBar  = document.getElementById('up-progress-bar');
 
@@ -1138,12 +1142,20 @@ function showUploadForm() {
       msgEl.className = 'f-msg err'; msgEl.style.display = 'block'; return;
     }
 
+    // Generate a unique ID for this upload so the server can cancel it
+    _activeUploadId = crypto.randomUUID ? crypto.randomUUID()
+                    : Math.random().toString(36).slice(2) + Date.now();
+
     submitBtn.disabled = true; submitBtn.textContent = 'Uploading…';
+    cancelBtn.textContent = 'Cancel Upload';
+    cancelBtn.style.borderColor = 'var(--danger)';
+    cancelBtn.style.color = 'var(--danger)';
     msgEl.style.display = 'none';
-    progressWrap.style.display = 'block'; progressBar.style.width = '30%';
+    progressWrap.style.display = 'block'; progressBar.style.width = '5%';
 
     const form = new FormData();
     form.append('file',       file);
+    form.append('upload_id',  _activeUploadId);
     form.append('title',      document.getElementById('ds-title').value.trim());
     form.append('description',document.getElementById('ds-desc').value.trim());
     form.append('author',     document.getElementById('ds-author').value.trim());
@@ -1152,26 +1164,76 @@ function showUploadForm() {
     form.append('source_url', document.getElementById('ds-source-url').value.trim());
     form.append('license',    document.getElementById('ds-license').value.trim());
 
-    try {
-      progressBar.style.width = '70%';
-      const res = await fetch(api() + '/api/datasets/upload', { method: 'POST', body: form });
+    const xhr = new XMLHttpRequest();
+    _activeXhr = xhr;
+
+    // Update progress bar as bytes are sent
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) {
+        progressBar.style.width = Math.round(e.loaded / e.total * 90) + '%';
+      }
+    };
+
+    xhr.onload = async () => {
       progressBar.style.width = '100%';
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || res.statusText);
-      msgEl.textContent = 'Uploaded: ' + data.filename + (data.rows ? ' (' + data.rows + ' rows)' : '');
-      msgEl.className = 'f-msg ok'; msgEl.style.display = 'block';
-      datasetsLoaded = false;
-      await loadDatasets(true);
-      setTimeout(() => {
-        const newDs = allDatasets.find(d => d.filename === data.filename);
-        if (newDs) openDataset(newDs.id);
-      }, 400);
-    } catch(e) {
-      progressBar.style.width = '0%';
-      msgEl.textContent = e.message; msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
-    } finally {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 400) throw new Error(data.error || xhr.statusText);
+        if (data.cancelled) {
+          msgEl.textContent = 'Upload cancelled.';
+          msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+        } else {
+          msgEl.textContent = 'Uploaded: ' + data.filename + (data.rows ? ' (' + data.rows + ' rows)' : '');
+          msgEl.className = 'f-msg ok'; msgEl.style.display = 'block';
+          datasetsLoaded = false;
+          await loadDatasets(true);
+          setTimeout(() => {
+            const newDs = allDatasets.find(d => d.filename === data.filename);
+            if (newDs) openDataset(newDs.id);
+          }, 400);
+        }
+      } catch(e) {
+        msgEl.textContent = e.message; msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+      } finally {
+        _reset();
+      }
+    };
+
+    xhr.onerror = () => {
+      msgEl.textContent = 'Upload failed — network error.';
+      msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+      _reset();
+    };
+
+    xhr.onabort = () => {
+      msgEl.textContent = 'Upload aborted.';
+      msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+      _reset();
+    };
+
+    function _reset() {
+      _activeXhr = null; _activeUploadId = null;
       submitBtn.disabled = false; submitBtn.textContent = 'Upload';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.style.borderColor = ''; cancelBtn.style.color = '';
       setTimeout(() => { progressWrap.style.display='none'; progressBar.style.width='0%'; }, 800);
+    }
+
+    xhr.open('POST', api() + '/api/datasets/upload');
+    xhr.send(form);
+  });
+
+  // Cancel button — aborts the XHR and signals the server
+  document.getElementById('ds-cancel').addEventListener('click', async () => {
+    if (_activeXhr && _activeUploadId) {
+      // Tell the server to stop processing (for large files already received)
+      fetch(api() + '/api/upload/cancel/' + _activeUploadId, { method: 'DELETE' }).catch(() => {});
+      // Abort the browser-side XHR (stops sending if still in flight)
+      _activeXhr.abort();
+    } else {
+      // No active upload — just close the form
+      document.getElementById('ds-content').innerHTML =
+        '<div class="empty-pane"><div class="big">◎</div><div>Select a dataset or upload a new one</div></div>';
     }
   });
 }

@@ -745,14 +745,18 @@ def upload_dataset():
     Accept a multipart file upload (CSV or JSON) plus optional metadata fields.
     Form fields:
         file         the .csv or .json file  (required)
+        upload_id    optional client-generated ID used to cancel this upload
         title, description, author, tags, source_url, license, priority
     """
+    global _upload_start_times
     import csv, json as pyjson, tempfile, shutil
 
     if "file" not in request.files:
         abort(400, description="No file in request. Use field name 'file'.")
 
-    upload = request.files["file"]
+    upload    = request.files["file"]
+    upload_id = request.form.get("upload_id", str(_uuid.uuid4()))
+
     if not upload.filename:
         abort(400, description="No file selected.")
 
@@ -764,77 +768,105 @@ def upload_dataset():
     if ddir is None:
         abort(500, description="Could not create datasets directory.")
 
-    # Save upload to a temp file for introspection
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        upload.save(tmp.name)
-        tmp_path = Path(tmp.name)
-
-    row_count, columns, parse_error = 0, [], None
+    _upload_start_times[upload_id] = _time.monotonic()
+    tmp_path = None
     try:
-        if suffix == ".csv":
-            with open(tmp_path, "r", encoding="utf-8", newline="") as f:
-                reader = csv.DictReader(f)
-                columns = list(reader.fieldnames or [])
-                for _ in reader:
-                    row_count += 1
-        else:
-            with open(tmp_path, "r", encoding="utf-8") as f:
-                raw_data = pyjson.load(f)
-            if isinstance(raw_data, list):
-                row_count = len(raw_data)
-                if raw_data and isinstance(raw_data[0], dict):
-                    columns = list(raw_data[0].keys())
-            elif isinstance(raw_data, dict):
-                row_count, columns = 1, list(raw_data.keys())
-    except Exception as e:
-        parse_error = str(e)
+        # Save upload to a temp file in chunks so cancellation can interrupt it
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp_path = Path(tmp.name)
+            CHUNK = 256 * 1024  # 256 KB
+            while True:
+                if upload_id in _cancelled_ids:
+                    _cancelled_ids.discard(upload_id)
+                    return jsonify({"cancelled": True, "message": "Upload cancelled."}), 200
+                chunk = upload.stream.read(CHUNK)
+                if not chunk:
+                    break
+                tmp.write(chunk)
 
-    stem     = Path(upload.filename).stem
-    tags_raw = request.form.get("tags", "")
-    tags     = [t.strip().lower() for t in tags_raw.split(",") if t.strip()]
-    now      = datetime.now().isoformat()
+        # Check for cancellation again after the file is fully received
+        if upload_id in _cancelled_ids:
+            _cancelled_ids.discard(upload_id)
+            tmp_path.unlink(missing_ok=True)
+            return jsonify({"cancelled": True, "message": "Upload cancelled."}), 200
 
-    meta = {
-        "title":             (request.form.get("title") or stem.replace("_"," ").replace("-"," ")).lower(),
-        "description":       request.form.get("description", ""),
-        "author":            request.form.get("author", "").lower(),
-        "tags":              tags,
-        "source_url":        request.form.get("source_url", ""),
-        "license":           request.form.get("license", ""),
-        "priority":          request.form.get("priority", ""),
-        "format":            suffix.lstrip(".").upper(),
-        "rows":              row_count,
-        "columns":           len(columns),
-        "fields":            columns,
-        "imported":          now,
-        "modified":          now,
-        "original_filename": upload.filename,
-    }
-    meta = {k: v for k, v in meta.items() if v != "" and v != [] and v != 0}
+        row_count, columns, parse_error = 0, [], None
+        try:
+            if suffix == ".csv":
+                with open(tmp_path, "r", encoding="utf-8", newline="") as f:
+                    reader = csv.DictReader(f)
+                    columns = list(reader.fieldnames or [])
+                    for _ in reader:
+                        row_count += 1
+                        if upload_id in _cancelled_ids:
+                            raise InterruptedError("cancelled")
+            else:
+                with open(tmp_path, "r", encoding="utf-8") as f:
+                    raw_data = pyjson.load(f)
+                if isinstance(raw_data, list):
+                    row_count = len(raw_data)
+                    if raw_data and isinstance(raw_data[0], dict):
+                        columns = list(raw_data[0].keys())
+                elif isinstance(raw_data, dict):
+                    row_count, columns = 1, list(raw_data.keys())
+        except InterruptedError:
+            _cancelled_ids.discard(upload_id)
+            tmp_path.unlink(missing_ok=True)
+            return jsonify({"cancelled": True, "message": "Upload cancelled."}), 200
+        except Exception as e:
+            parse_error = str(e)
 
-    # Move temp file into datasets dir
-    dest = ddir / upload.filename
-    counter = 1
-    while dest.exists():
-        dest = ddir / f"{stem}_{counter}{suffix}"
-        counter += 1
+        stem     = Path(upload.filename).stem
+        tags_raw = request.form.get("tags", "")
+        tags     = [t.strip().lower() for t in tags_raw.split(",") if t.strip()]
+        now      = datetime.now().isoformat()
 
-    try:
-        tmp_path.rename(dest)
-    except Exception:
-        shutil.copy2(tmp_path, dest)
-        tmp_path.unlink(missing_ok=True)
+        meta = {
+            "title":             (request.form.get("title") or stem.replace("_"," ").replace("-"," ")).lower(),
+            "description":       request.form.get("description", ""),
+            "author":            request.form.get("author", "").lower(),
+            "tags":              tags,
+            "source_url":        request.form.get("source_url", ""),
+            "license":           request.form.get("license", ""),
+            "priority":          request.form.get("priority", ""),
+            "format":            suffix.lstrip(".").upper(),
+            "rows":              row_count,
+            "columns":           len(columns),
+            "fields":            columns,
+            "imported":          now,
+            "modified":          now,
+            "original_filename": upload.filename,
+        }
+        meta = {k: v for k, v in meta.items() if v != "" and v != [] and v != 0}
 
-    sidecar = _write_sidecar(dest, meta)
+        dest = ddir / upload.filename
+        counter = 1
+        while dest.exists():
+            dest = ddir / f"{stem}_{counter}{suffix}"
+            counter += 1
 
-    return jsonify({
-        "message":     "Dataset uploaded.",
-        "filename":    dest.name,
-        "sidecar":     sidecar.name if sidecar else None,
-        "rows":        row_count,
-        "columns":     len(columns),
-        "parse_error": parse_error,
-    }), 201
+        try:
+            tmp_path.rename(dest)
+        except Exception:
+            shutil.copy2(tmp_path, dest)
+            tmp_path.unlink(missing_ok=True)
+
+        sidecar = _write_sidecar(dest, meta)
+
+        return jsonify({
+            "message":     "Dataset uploaded.",
+            "filename":    dest.name,
+            "sidecar":     sidecar.name if sidecar else None,
+            "rows":        row_count,
+            "columns":     len(columns),
+            "parse_error": parse_error,
+        }), 201
+
+    finally:
+        _upload_start_times.pop(upload_id, None)
+        if tmp_path and tmp_path.exists():
+            try: tmp_path.unlink(missing_ok=True)
+            except Exception: pass
 
 
 # ---------------------------------------------------------------------------
@@ -904,72 +936,102 @@ def reupload_dataset(dataset_id):
     if suffix not in (".csv", ".json"):
         abort(400, description=f"Only .csv and .json files are supported (got '{suffix}').")
 
-    # Save upload to a temp file for introspection
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        upload.save(tmp.name)
+    upload_id = request.form.get("upload_id", str(_uuid.uuid4()))
+
+    _upload_start_times[upload_id] = _time.monotonic()
+    tmp_path = None
+    try:
+      # Save upload in chunks so cancellation can interrupt it
+      with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp_path = Path(tmp.name)
+        CHUNK = 256 * 1024
+        while True:
+            if upload_id in _cancelled_ids:
+                _cancelled_ids.discard(upload_id)
+                return jsonify({"cancelled": True, "message": "Reupload cancelled."}), 200
+            chunk = upload.stream.read(CHUNK)
+            if not chunk:
+                break
+            tmp.write(chunk)
 
-    row_count, columns, parse_error = 0, [], None
-    try:
-        if suffix == ".csv":
-            with open(tmp_path, "r", encoding="utf-8", newline="") as f:
-                reader = csv.DictReader(f)
-                columns = list(reader.fieldnames or [])
-                for _ in reader:
-                    row_count += 1
-        else:
-            with open(tmp_path, "r", encoding="utf-8") as f:
-                raw_data = pyjson.load(f)
-            if isinstance(raw_data, list):
-                row_count = len(raw_data)
-                if raw_data and isinstance(raw_data[0], dict):
-                    columns = list(raw_data[0].keys())
-            elif isinstance(raw_data, dict):
-                row_count, columns = 1, list(raw_data.keys())
-    except Exception as e:
-        parse_error = str(e)
+      if upload_id in _cancelled_ids:
+          _cancelled_ids.discard(upload_id)
+          tmp_path.unlink(missing_ok=True)
+          return jsonify({"cancelled": True, "message": "Reupload cancelled."}), 200
 
-    # Load existing sidecar metadata and apply any overrides from form
-    meta = read_dataset_sidecar(ds)
+      row_count, columns, parse_error = 0, [], None
+      try:
+          if suffix == ".csv":
+              with open(tmp_path, "r", encoding="utf-8", newline="") as f:
+                  reader = csv.DictReader(f)
+                  columns = list(reader.fieldnames or [])
+                  for _ in reader:
+                      row_count += 1
+                      if upload_id in _cancelled_ids:
+                          raise InterruptedError("cancelled")
+          else:
+              with open(tmp_path, "r", encoding="utf-8") as f:
+                  raw_data = pyjson.load(f)
+              if isinstance(raw_data, list):
+                  row_count = len(raw_data)
+                  if raw_data and isinstance(raw_data[0], dict):
+                      columns = list(raw_data[0].keys())
+              elif isinstance(raw_data, dict):
+                  row_count, columns = 1, list(raw_data.keys())
+      except InterruptedError:
+          _cancelled_ids.discard(upload_id)
+          tmp_path.unlink(missing_ok=True)
+          return jsonify({"cancelled": True, "message": "Reupload cancelled."}), 200
+      except Exception as e:
+          parse_error = str(e)
 
-    for field in ("title", "description", "source_url", "license", "priority"):
-        val = request.form.get(field, "").strip()
-        if val:
-            meta[field] = val.lower() if field == "title" else val
+      # Load existing sidecar metadata and apply any overrides from form
+      meta = read_dataset_sidecar(ds)
 
-    author = request.form.get("author", "").strip()
-    if author:
-        meta["author"] = author.lower()
+      for field in ("title", "description", "source_url", "license", "priority"):
+          val = request.form.get(field, "").strip()
+          if val:
+              meta[field] = val.lower() if field == "title" else val
 
-    tags_raw = request.form.get("tags", "").strip()
-    if tags_raw:
-        meta["tags"] = [t.strip().lower() for t in tags_raw.split(",") if t.strip()]
+      author = request.form.get("author", "").strip()
+      if author:
+          meta["author"] = author.lower()
 
-    # Always update file-derived fields
-    meta["format"]            = suffix.lstrip(".").upper()
-    meta["rows"]              = row_count
-    meta["columns"]           = len(columns)
-    meta["fields"]            = columns
-    meta["modified"]          = datetime.now().isoformat()
-    meta["original_filename"] = upload.filename
-    meta = {k: v for k, v in meta.items() if v != "" and v != [] and v != 0}
+      tags_raw = request.form.get("tags", "").strip()
+      if tags_raw:
+          meta["tags"] = [t.strip().lower() for t in tags_raw.split(",") if t.strip()]
 
-    # Replace the data file (keep same path)
-    try:
-        tmp_path.rename(ds)
-    except Exception:
-        shutil.copy2(tmp_path, ds)
-        tmp_path.unlink(missing_ok=True)
+      # Always update file-derived fields
+      meta["format"]            = suffix.lstrip(".").upper()
+      meta["rows"]              = row_count
+      meta["columns"]           = len(columns)
+      meta["fields"]            = columns
+      meta["modified"]          = datetime.now().isoformat()
+      meta["original_filename"] = upload.filename
+      meta = {k: v for k, v in meta.items() if v != "" and v != [] and v != 0}
 
-    _write_sidecar(ds, meta)
+      # Replace the data file (keep same path)
+      try:
+          tmp_path.rename(ds)
+      except Exception:
+          shutil.copy2(tmp_path, ds)
+          tmp_path.unlink(missing_ok=True)
 
-    return jsonify({
-        "message":     "Dataset reuploaded.",
-        "filename":    ds.name,
-        "rows":        row_count,
-        "columns":     len(columns),
-        "parse_error": parse_error,
-    })
+      _write_sidecar(ds, meta)
+
+      return jsonify({
+          "message":     "Dataset reuploaded.",
+          "filename":    ds.name,
+          "rows":        row_count,
+          "columns":     len(columns),
+          "parse_error": parse_error,
+      })
+
+    finally:
+        _upload_start_times.pop(upload_id, None)
+        if tmp_path and tmp_path.exists():
+            try: tmp_path.unlink(missing_ok=True)
+            except Exception: pass
 
 
 
@@ -1079,10 +1141,14 @@ def get_dataset_data(dataset_id):
 # Werkzeug dev server which catches SystemExit.
 
 import time as _time
+import uuid as _uuid
 
-_last_ping    = _time.monotonic()
-PING_INTERVAL = 5     # seconds between browser pings
-SHUTDOWN_TIMEOUT = 15  # seconds of silence before shutdown
+_last_ping           = _time.monotonic()
+_upload_start_times  = {}    # upload_id -> monotonic start time
+_cancelled_ids       = set() # upload IDs that the user cancelled
+PING_INTERVAL        = 5     # seconds between browser pings
+SHUTDOWN_TIMEOUT     = 15    # seconds of silence before shutdown
+UPLOAD_STALE_TIMEOUT = 300   # seconds before an upload is considered dead (5 min)
 
 
 @app.route("/ping")
@@ -1093,13 +1159,43 @@ def ping():
     return jsonify({"ok": True})
 
 
+@app.route("/api/upload/cancel/<upload_id>", methods=["DELETE"])
+def cancel_upload(upload_id):
+    """
+    Signal a running upload to abort.
+    The upload endpoint checks _cancelled_ids and stops early if its ID appears.
+    """
+    _cancelled_ids.add(upload_id)
+    return jsonify({"message": "Cancel signal sent.", "upload_id": upload_id})
+
+
 def _watchdog():
-    """Background thread — exits the process when pings stop."""
-    # Give the browser time to open and send its first ping
+    """Background thread — exits the process when pings stop.
+
+    Uses upload start timestamps rather than a counter so a dropped connection
+    (tab closed mid-upload) can never leave the watchdog stuck forever.
+    An upload is only considered active if it started less than
+    UPLOAD_STALE_TIMEOUT seconds ago — stale entries are evicted automatically.
+    """
     _time.sleep(SHUTDOWN_TIMEOUT)
     while True:
         _time.sleep(2)
-        silence = _time.monotonic() - _last_ping
+        now = _time.monotonic()
+
+        # Evict uploads that started too long ago (connection dropped / server hung)
+        stale = [uid for uid, t in _upload_start_times.items()
+                 if now - t > UPLOAD_STALE_TIMEOUT]
+        for uid in stale:
+            _upload_start_times.pop(uid, None)
+            print(f"  [watchdog] evicted stale upload {uid[:8]}…")
+
+        if _upload_start_times:
+            # At least one upload is genuinely in progress — reset clock and wait
+            global _last_ping
+            _last_ping = now
+            continue
+
+        silence = now - _last_ping
         if silence > SHUTDOWN_TIMEOUT:
             print(f"\nNo ping for {silence:.0f}s — browser tab closed. Shutting down.")
             os._exit(0)
