@@ -94,7 +94,121 @@ from mindwriter import (
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=["http://localhost:8000", "http://127.0.0.1:8000"])
+
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+# Three layers of protection, all configured via environment variables so
+# nothing sensitive is baked into the source code:
+#
+#   MINDWRITER_API_KEY   — required token; auto-generated on first run and
+#                          saved to ~/.notes/.api_key  (or printed if saving
+#                          fails).  Pass as header:  X-API-Key: <token>
+#                          or query param:           ?api_key=<token>
+#
+#   RATE_LIMIT_WINDOW    — rolling window in seconds  (default: 60)
+#   RATE_LIMIT_MAX       — max requests per window    (default: 120)
+#
+# Localhost binding: app.run() uses host="127.0.0.1" so the socket never
+# accepts connections from other machines on the network.
+# ---------------------------------------------------------------------------
+
+import secrets as _secrets
+import hashlib  as _hashlib
+from collections import defaultdict as _defaultdict
+from functools   import wraps as _wraps
+
+# ── API key ───────────────────────────────────────────────────────────────
+
+_KEY_FILE = Path.home() / ".notes" / ".api_key"
+
+def _load_or_create_api_key() -> str:
+    """
+    Load the API key from disk, or generate a new one and save it.
+    The key is stored in plain text in ~/.notes/.api_key which is only
+    readable by the current user (chmod 600 is applied on creation).
+    """
+    env_key = os.environ.get("MINDWRITER_API_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    if _KEY_FILE.exists():
+        key = _KEY_FILE.read_text().strip()
+        if key:
+            return key
+
+    # Generate a new 32-byte (256-bit) URL-safe token
+    key = _secrets.token_urlsafe(32)
+    try:
+        _KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _KEY_FILE.write_text(key)
+        _KEY_FILE.chmod(0o600)          # owner read/write only
+    except Exception as e:
+        print(f"  ⚠  Could not save API key to {_KEY_FILE}: {e}")
+        print(f"     Set it manually:  export MINDWRITER_API_KEY={key}")
+    return key
+
+_API_KEY = _load_or_create_api_key()
+
+def _check_api_key() -> bool:
+    """Return True if the request carries the correct API key."""
+    # Accept via header or query param
+    provided = (
+        request.headers.get("X-API-Key", "")
+        or request.args.get("api_key", "")
+    )
+    # Constant-time comparison to prevent timing attacks
+    return _secrets.compare_digest(provided, _API_KEY)
+
+# Public endpoints that do NOT require authentication
+_PUBLIC_PATHS = {"/", "/health", "/ping", "/api/auth/key"}
+
+# ── Rate limiting ─────────────────────────────────────────────────────────
+
+_RATE_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", 60))   # seconds
+_RATE_MAX    = int(os.environ.get("RATE_LIMIT_MAX",   120))   # requests
+_rate_store: dict = _defaultdict(list)   # ip -> [timestamp, ...]
+
+def _check_rate_limit(ip: str) -> bool:
+    """Sliding-window rate limiter. Returns True if request is allowed."""
+    now    = _time.monotonic()
+    window = _rate_store[ip]
+    # Drop timestamps outside the rolling window
+    _rate_store[ip] = [t for t in window if now - t < _RATE_WINDOW]
+    if len(_rate_store[ip]) >= _RATE_MAX:
+        return False
+    _rate_store[ip].append(now)
+    return True
+
+# ── Before-request hook — runs before every route ─────────────────────────
+
+@app.before_request
+def enforce_security():
+    """
+    Applied to every incoming request:
+      1. Localhost-only check  — refuse anything not from 127.0.0.1
+      2. Rate limit            — 429 if the client exceeds the window
+      3. API key               — 401 if missing or wrong (public paths exempt)
+    """
+    # 1. Localhost binding — belt-and-suspenders check even though we bind
+    #    to 127.0.0.1; protects against reverse proxies forwarding externally.
+    remote = request.remote_addr
+    if remote not in ("127.0.0.1", "::1"):
+        return jsonify({"error": "Access denied: localhost only."}), 403
+
+    # 2. Rate limit
+    if not _check_rate_limit(remote):
+        return jsonify({
+            "error": f"Rate limit exceeded. Max {_RATE_MAX} requests per {_RATE_WINDOW}s."
+        }), 429
+
+    # 3. API key — skip for public paths (UI, health, ping)
+    if request.path not in _PUBLIC_PATHS:
+        if not _check_api_key():
+            return jsonify({"error": "Unauthorized. Provide a valid X-API-Key header."}), 401
+
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +295,19 @@ def _write_yaml_header(file_path: Path, meta: dict, body: str):
     lines.append("\n")
     lines.append(body)
     file_path.write_text("".join(lines), encoding="utf-8")
+
+
+@app.route("/api/auth/key", methods=["GET"])
+def get_api_key():
+    """
+    Return the current API key to the local UI.
+    This endpoint is public (no key required) but localhost-only — the
+    before_request hook already refuses any non-loopback connection, so
+    only someone already on this machine can reach it.
+    The UI calls this once on load to auto-fill the key field.
+    """
+    return jsonify({"api_key": _API_KEY})
+
 
 
 # ---------------------------------------------------------------------------
@@ -1220,6 +1347,14 @@ if __name__ == "__main__":
         print(f"     Create it with:  mkdir -p {nd}")
     elif count == 0:
         print(f"\n  ⚠  No .md/.note/.txt files found in {nd}")
+
+    print()
+    print(f"Security")
+    print(f"  Binding        →  127.0.0.1 (localhost only)")
+    print(f"  API key        →  {_API_KEY[:8]}… (full key in {_KEY_FILE})")
+    print(f"  Rate limit     →  {_RATE_MAX} requests / {_RATE_WINDOW}s")
+    print(f"\n  To use the API from a script:")
+    print(f"    curl -H \"X-API-Key: {_API_KEY}\" http://localhost:{port}/api/notes")
     print()
 
     def open_browser():
@@ -1235,4 +1370,4 @@ if __name__ == "__main__":
     print(f"  Auto-shutdown after {SHUTDOWN_TIMEOUT}s with no browser activity.")
     print()
 
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    app.run(host="127.0.0.1", port=port, debug=debug)

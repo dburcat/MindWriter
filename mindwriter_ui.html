@@ -237,6 +237,9 @@ mark{background:rgba(184,240,80,.28);color:var(--text);border-radius:2px;padding
   <div class="api-row">
     <label for="api-input">API</label>
     <input id="api-input" value="http://localhost:8000" spellcheck="false"/>
+    <label for="key-input" style="margin-left:6px">Key</label>
+    <input id="key-input" type="password" placeholder="API key…" spellcheck="false"
+           style="font-family:var(--mono);font-size:11px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:var(--r);width:140px;outline:none"/>
     <div id="api-dot"></div>
   </div>
 </header>
@@ -365,8 +368,14 @@ const apiDot   = document.getElementById('api-dot');
 const banner   = document.getElementById('no-api-banner');
 const api = () => apiInput.value.replace(/\/$/, '');
 
+function apiKey() {
+  return document.getElementById('key-input').value.trim();
+}
+
 async function apiFetch(path, opts={}) {
-  const res = await fetch(api() + path, opts);
+  // Merge X-API-Key into headers for every request
+  const headers = Object.assign({'X-API-Key': apiKey()}, opts.headers || {});
+  const res = await fetch(api() + path, Object.assign({}, opts, {headers}));
   if (!res.ok) { const j = await res.json().catch(()=>({})); throw new Error(j.error || res.statusText); }
   return res.json();
 }
@@ -991,7 +1000,7 @@ function openReupload(id) {
     try {
       const form = new FormData();
       form.append('file', file);
-      const res  = await fetch(api() + `/api/datasets/${id}/reupload`, { method: 'PUT', body: form });
+      const res  = await fetch(api() + `/api/datasets/${id}/reupload`, { method: 'PUT', body: form, headers: {'X-API-Key': apiKey()} });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
 
@@ -1220,6 +1229,7 @@ function showUploadForm() {
     }
 
     xhr.open('POST', api() + '/api/datasets/upload');
+    xhr.setRequestHeader('X-API-Key', apiKey());
     xhr.send(form);
   });
 
@@ -1239,8 +1249,36 @@ function showUploadForm() {
 }
 
 // ── boot ──────────────────────────────────────────────────────────────────
-checkHealth();
-loadNotes();
+
+// Persist key changes to localStorage
+document.getElementById('key-input').addEventListener('change', () => {
+  localStorage.setItem('mw_api_key', document.getElementById('key-input').value.trim());
+});
+
+async function boot() {
+  // 1. Try to auto-load the API key from the server (works because we are
+  //    on localhost — the server exposes it as a convenience endpoint).
+  try {
+    const res  = await fetch(api() + '/api/auth/key');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.api_key) {
+        document.getElementById('key-input').value = data.api_key;
+        localStorage.setItem('mw_api_key', data.api_key);
+      }
+    }
+  } catch {
+    // Server not reachable yet — fall back to localStorage
+    const saved = localStorage.getItem('mw_api_key');
+    if (saved) document.getElementById('key-input').value = saved;
+  }
+
+  // 2. Now that the key is loaded, check connectivity and load notes
+  checkHealth();
+  loadNotes();
+}
+
+boot();
 
 // Keep-alive ping — tells the server the tab is still open.
 // The server shuts itself down if pings stop arriving.
