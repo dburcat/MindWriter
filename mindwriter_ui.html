@@ -261,6 +261,9 @@ mark{background:rgba(184,240,80,.28);color:var(--text);border-radius:2px;padding
     <input id="key-input" type="password" placeholder="API key…" spellcheck="false"
            style="font-family:var(--mono);font-size:11px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:var(--r);width:140px;outline:none"/>
     <div id="api-dot"></div>
+    <a id="btn-docs" href="#" target="_blank"
+       style="font-family:var(--mono);font-size:11px;color:var(--muted);text-decoration:none;padding:4px 9px;border:1px solid var(--border);border-radius:var(--r);transition:color .12s,border-color .12s;white-space:nowrap"
+       onmouseover="this.style.color='var(--accent)';this.style.borderColor='var(--accent)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">docs ↗</a>
   </div>
 </header>
 
@@ -1897,6 +1900,8 @@ async function boot() {
   loadNotes();
 }
 
+document.getElementById("btn-docs").href = api() + "/docs";
+apiInput.addEventListener("change", () => { document.getElementById("btn-docs").href = api() + "/docs"; });
 boot();
 
 // Keep-alive ping — tells the server the tab is still open.

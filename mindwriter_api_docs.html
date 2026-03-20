@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MindWriter API Docs</title>
+<style>
+:root{
+  --bg:#0c0c0f;--surf:#121218;--surf2:#18181f;--border:#222230;
+  --accent:#b8f050;--blue:#50c8f0;--muted:#50506a;--text:#d8d8e8;
+  --dim:#8888a0;--danger:#f05858;--warn:#f0c850;--green:#50f0a0;
+  --r:5px;
+  --mono:"JetBrains Mono","Fira Mono",ui-monospace,monospace;
+  --sans:"DM Sans","Segoe UI",system-ui,sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);font-size:14px;color:var(--text);background:var(--bg);display:flex;min-height:100vh}
+
+/* sidebar nav */
+nav{width:240px;flex-shrink:0;background:var(--surf);border-right:1px solid var(--border);
+    position:sticky;top:0;height:100vh;overflow-y:auto;padding:20px 0}
+nav h2{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);
+       letter-spacing:.08em;padding:0 18px 10px;border-bottom:1px solid var(--border);margin-bottom:8px}
+.nav-group{margin-bottom:4px}
+.nav-label{font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;
+           padding:8px 18px 3px;font-family:var(--mono)}
+nav a{display:flex;align-items:center;gap:8px;padding:5px 18px;font-size:12px;color:var(--dim);
+      text-decoration:none;transition:color .1s,background .1s;border-left:2px solid transparent}
+nav a:hover{color:var(--text);background:var(--surf2)}
+nav a.active{color:var(--accent);border-left-color:var(--accent);background:rgba(184,240,80,.04)}
+.badge{font-family:var(--mono);font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;flex-shrink:0}
+.get{background:#0e2a1e;color:var(--green)}
+.post{background:#1a2a0a;color:var(--accent)}
+.put{background:#1a1a0a;color:var(--warn)}
+.del{background:#2a0e0e;color:var(--danger)}
+
+/* main */
+main{flex:1;max-width:860px;padding:40px 48px;overflow-x:hidden}
+h1{font-size:26px;font-weight:700;margin-bottom:6px}
+.subtitle{color:var(--dim);font-size:14px;margin-bottom:32px;line-height:1.6}
+
+/* section */
+.section{margin-bottom:60px}
+.section-title{font-size:11px;font-family:var(--mono);letter-spacing:.12em;text-transform:uppercase;
+               color:var(--blue);margin-bottom:18px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+
+/* endpoint card */
+.endpoint{background:var(--surf);border:1px solid var(--border);border-radius:var(--r);
+          margin-bottom:20px;overflow:hidden}
+.endpoint-head{display:flex;align-items:center;gap:10px;padding:12px 16px;
+               background:var(--surf2);border-bottom:1px solid var(--border)}
+.method{font-family:var(--mono);font-size:11px;font-weight:700;padding:2px 8px;
+        border-radius:3px;flex-shrink:0}
+.path{font-family:var(--mono);font-size:13px;color:var(--text)}
+.path .param{color:var(--blue)}
+.endpoint-desc{font-size:12px;color:var(--dim);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.endpoint-body{padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.endpoint-summary{font-size:13px;color:var(--dim);line-height:1.6}
+
+/* tables */
+.param-table{width:100%;border-collapse:collapse;font-size:12px}
+.param-table th{text-align:left;font-family:var(--mono);font-size:10px;color:var(--blue);
+                letter-spacing:.08em;text-transform:uppercase;padding:5px 8px;
+                border-bottom:1px solid var(--border);background:var(--surf2)}
+.param-table td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5}
+.param-table tr:last-child td{border-bottom:none}
+.param-table .pname{font-family:var(--mono);font-size:12px;color:var(--accent)}
+.param-table .ptype{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.param-table .preq{font-family:var(--mono);font-size:10px;color:var(--danger)}
+.param-table .popt{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.param-table .pdesc{color:var(--dim)}
+
+/* code blocks */
+.code-block{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);
+            padding:12px 14px;font-family:var(--mono);font-size:12px;color:#b8d8b8;
+            overflow-x:auto;white-space:pre;line-height:1.7}
+.code-block .cm{color:var(--muted)}
+.code-block .ck{color:var(--blue)}
+.code-block .cv{color:var(--accent)}
+.code-block .cs{color:#f0c8a0}
+
+/* status badges */
+.status-row{display:flex;flex-wrap:wrap;gap:6px}
+.status{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:3px}
+.s200{background:#0e2018;color:var(--green);border:1px solid #1a3828}
+.s201{background:#0e2018;color:var(--green);border:1px solid #1a3828}
+.s400{background:#2a1a0a;color:var(--warn);border:1px solid #3e2a10}
+.s401{background:#2a1010;color:var(--danger);border:1px solid #3e2020}
+.s403{background:#2a1010;color:var(--danger);border:1px solid #3e2020}
+.s404{background:#2a1010;color:var(--danger);border:1px solid #3e2020}
+.s409{background:#2a1010;color:var(--danger);border:1px solid #3e2020}
+.s429{background:#2a2010;color:var(--warn);border:1px solid #3e3020}
+.s500{background:#2a1010;color:var(--danger);border:1px solid #3e2020}
+
+/* misc */
+.sub-label{font-family:var(--mono);font-size:10px;color:var(--blue);letter-spacing:.08em;
+           text-transform:uppercase;margin-bottom:6px}
+.note-box{background:#0e1e2a;border:1px solid #1a3040;border-radius:var(--r);
+          padding:10px 13px;font-size:12px;color:#80b8d0;line-height:1.6}
+.note-box b{color:var(--blue)}
+.warn-box{background:#1e1800;border:1px solid #3e3000;border-radius:var(--r);
+          padding:10px 13px;font-size:12px;color:#c0a040;line-height:1.6}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<nav>
+  <h2>✦ MINDWRITER API</h2>
+  <div class="nav-group">
+    <div class="nav-label">General</div>
+    <a href="#overview">Overview</a>
+    <a href="#auth">Authentication</a>
+    <a href="#errors">Error Codes</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">System</div>
+    <a href="#health"><span class="badge get">GET</span> /health</a>
+    <a href="#auth-key"><span class="badge get">GET</span> /api/auth/key</a>
+    <a href="#ping"><span class="badge get">GET</span> /ping</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">Notes</div>
+    <a href="#list-notes"><span class="badge get">GET</span> /api/notes</a>
+    <a href="#get-note"><span class="badge get">GET</span> /api/notes/:id</a>
+    <a href="#search-notes"><span class="badge get">GET</span> /api/notes/search</a>
+    <a href="#create-note"><span class="badge post">POST</span> /api/notes</a>
+    <a href="#upload-note"><span class="badge post">POST</span> /api/notes/upload</a>
+    <a href="#update-note"><span class="badge put">PUT</span> /api/notes/:id</a>
+    <a href="#delete-note"><span class="badge del">DEL</span> /api/notes/:id</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">Stats</div>
+    <a href="#stats"><span class="badge get">GET</span> /api/stats</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">Datasets</div>
+    <a href="#list-datasets"><span class="badge get">GET</span> /api/datasets</a>
+    <a href="#get-dataset"><span class="badge get">GET</span> /api/datasets/:n</a>
+    <a href="#dataset-data"><span class="badge get">GET</span> /api/datasets/:n/data</a>
+    <a href="#create-dataset"><span class="badge post">POST</span> /api/datasets/create</a>
+    <a href="#upload-dataset"><span class="badge post">POST</span> /api/datasets/upload</a>
+    <a href="#import-dataset"><span class="badge post">POST</span> /api/datasets/import</a>
+    <a href="#add-rows"><span class="badge post">POST</span> /api/datasets/:n/rows</a>
+    <a href="#add-columns"><span class="badge post">POST</span> /api/datasets/:n/columns</a>
+    <a href="#reupload-dataset"><span class="badge put">PUT</span> /api/datasets/:n/reupload</a>
+    <a href="#delete-dataset"><span class="badge del">DEL</span> /api/datasets/:n</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-label">Uploads</div>
+    <a href="#cancel-upload"><span class="badge del">DEL</span> /api/upload/cancel/:id</a>
+  </div>
+</nav>
+
+<main>
+  <h1>MindWriter API</h1>
+  <p class="subtitle">
+    REST API for the MindWriter notes manager. All endpoints return JSON.<br>
+    Base URL: <code style="font-family:var(--mono);color:var(--accent)">http://localhost:8000</code>
+  </p>
+
+  <!-- ── Overview ────────────────────────────────────────────────────── -->
+  <div class="section" id="overview">
+    <div class="section-title">Overview</div>
+    <div class="endpoint-summary" style="margin-bottom:14px">
+      The API reads and writes notes from <code style="font-family:var(--mono);color:var(--accent)">~/.notes/notes/</code>
+      and datasets from <code style="font-family:var(--mono);color:var(--accent)">~/.notes/datasets/</code>.
+      Override the root with the <code style="font-family:var(--mono);color:var(--blue)">NOTES_DIR</code> environment variable.
+    </div>
+    <div class="sub-label">Starting the server</div>
+    <div class="code-block"><span class="cm"># Install dependencies</span>
+pip install flask flask-cors
+
+<span class="cm"># Run (default port 8000)</span>
+python3 mindwriter_api.py
+
+<span class="cm"># Custom port or notes directory</span>
+PORT=9000 python3 mindwriter_api.py
+NOTES_DIR=/my/notes python3 mindwriter_api.py
+
+<span class="cm"># Debug mode (no auto-shutdown, no browser open)</span>
+DEBUG=true python3 mindwriter_api.py</div>
+  </div>
+
+  <!-- ── Authentication ──────────────────────────────────────────────── -->
+  <div class="section" id="auth">
+    <div class="section-title">Authentication</div>
+    <div class="endpoint-summary" style="margin-bottom:12px">
+      All endpoints except <code style="font-family:var(--mono);color:var(--accent)">/</code>,
+      <code style="font-family:var(--mono);color:var(--accent)">/health</code>,
+      <code style="font-family:var(--mono);color:var(--accent)">/ping</code>, and
+      <code style="font-family:var(--mono);color:var(--accent)">/api/auth/key</code>
+      require an API key. A key is auto-generated on first run and saved to
+      <code style="font-family:var(--mono);color:var(--accent)">~/.notes/.api_key</code>.
+    </div>
+    <div class="sub-label">Passing the key</div>
+    <div class="code-block"><span class="cm"># Via header (recommended)</span>
+curl -H <span class="cs">"X-API-Key: YOUR_KEY"</span> http://localhost:8000/api/notes
+
+<span class="cm"># Via query param</span>
+curl http://localhost:8000/api/notes?api_key=YOUR_KEY</div>
+    <div class="note-box" style="margin-top:10px">
+      <b>Rate limiting:</b> 120 requests per 60-second window by default.
+      Override with <code>RATE_LIMIT_MAX</code> and <code>RATE_LIMIT_WINDOW</code> env vars.
+      Exceeding the limit returns <code>429 Too Many Requests</code>.<br><br>
+      <b>Localhost only:</b> The server binds to <code>127.0.0.1</code> and rejects all
+      non-loopback connections with <code>403 Forbidden</code>.
+    </div>
+  </div>
+
+  <!-- ── Error Codes ─────────────────────────────────────────────────── -->
+  <div class="section" id="errors">
+    <div class="section-title">Error Codes</div>
+    <table class="param-table">
+      <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td class="pname">400</td><td class="pdesc">Bad request — missing or invalid parameter</td></tr>
+        <tr><td class="pname">401</td><td class="pdesc">Unauthorized — API key missing or wrong</td></tr>
+        <tr><td class="pname">403</td><td class="pdesc">Forbidden — connection not from localhost</td></tr>
+        <tr><td class="pname">404</td><td class="pdesc">Not found — note or dataset does not exist</td></tr>
+        <tr><td class="pname">409</td><td class="pdesc">Conflict — duplicate title or filename</td></tr>
+        <tr><td class="pname">429</td><td class="pdesc">Too many requests — rate limit exceeded</td></tr>
+        <tr><td class="pname">500</td><td class="pdesc">Internal error — file system operation failed</td></tr>
+      </tbody>
+    </table>
+    <div class="code-block" style="margin-top:10px"><span class="cm">// All errors return the same shape:</span>
+{ <span class="ck">"error"</span>: <span class="cs">"Human-readable description"</span> }</div>
+  </div>
+
+  <!-- ── SYSTEM ──────────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-title">System</div>
+
+    <div class="endpoint" id="health">
+      <div class="endpoint-head">
+        <span class="method get">GET</span>
+        <span class="path">/health</span>
+        <span class="endpoint-desc">Server health check · public</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Returns server status, resolved notes directory, and note count. Does not require authentication.</p>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{
+  <span class="ck">"status"</span>:           <span class="cs">"ok"</span>,
+  <span class="ck">"notes_root"</span>:       <span class="cs">"/home/user/.notes"</span>,
+  <span class="ck">"notes_dir"</span>:        <span class="cs">"/home/user/.notes/notes"</span>,
+  <span class="ck">"notes_dir_exists"</span>: <span class="cv">true</span>,
+  <span class="ck">"note_count"</span>:       <span class="cv">42</span>
+}</div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="auth-key">
+      <div class="endpoint-head">
+        <span class="method get">GET</span>
+        <span class="path">/api/auth/key</span>
+        <span class="endpoint-desc">Retrieve API key · public · localhost only</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Returns the current API key. No authentication required. Safe because the server only accepts localhost connections — only someone on the same machine can call this.</p>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{ <span class="ck">"api_key"</span>: <span class="cs">"your-key-here"</span> }</div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="ping">
+      <div class="endpoint-head">
+        <span class="method get">GET</span>
+        <span class="path">/ping</span>
+        <span class="endpoint-desc">Keepalive heartbeat · public</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Called by the UI every 5 seconds. Resets the auto-shutdown watchdog timer. The server exits ~15 seconds after pings stop arriving (configurable via <code style="font-family:var(--mono)">SHUTDOWN_TIMEOUT</code>).</p>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{ <span class="ck">"ok"</span>: <span class="cv">true</span> }</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── NOTES ───────────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-title">Notes</div>
+
+    <div class="endpoint" id="list-notes">
+      <div class="endpoint-head">
+        <span class="method get">GET</span>
+        <span class="path">/api/notes</span>
+        <span class="endpoint-desc">List all notes</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Returns all notes with metadata (no body content). Supports filtering and sorting.</p>
+        <div class="sub-label">Query Parameters</div>
+        <table class="param-table">
+          <thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="pname">tag</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Filter by tag (exact match, lowercase)</td></tr>
+            <tr><td class="pname">author</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Filter by author (exact match, lowercase)</td></tr>
+            <tr><td class="pname">sort</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc"><code>id</code> (default) · <code>title</code> · <code>modified</code> · <code>created</code></td></tr>
+          </tbody>
+        </table>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{
+  <span class="ck">"total"</span>: <span class="cv">12</span>,
+  <span class="ck">"notes"</span>: [
+    {
+      <span class="ck">"id"</span>: <span class="cv">1</span>, <span class="ck">"filename"</span>: <span class="cs">"my-note.md"</span>, <span class="ck">"title"</span>: <span class="cs">"my note"</span>,
+      <span class="ck">"author"</span>: <span class="cs">"alice"</span>, <span class="ck">"tags"</span>: [<span class="cs">"python"</span>], <span class="ck">"priority"</span>: <span class="cs">"high"</span>,
+      <span class="ck">"created"</span>: <span class="cs">"2024-01-15T10:30:00"</span>, <span class="ck">"modified"</span>: <span class="cs">"2024-01-20T14:00:00"</span>
+    }
+  ]
+}</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="get-note">
+      <div class="endpoint-head">
+        <span class="method get">GET</span>
+        <span class="path">/api/notes/<span class="param">:id</span></span>
+        <span class="endpoint-desc">Get one note with body</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Returns full note including body content. <code style="font-family:var(--mono)">:id</code> can be a numeric index or the exact filename.</p>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{
+  <span class="ck">"id"</span>: <span class="cv">1</span>, <span class="ck">"filename"</span>: <span class="cs">"my-note.md"</span>, <span class="ck">"title"</span>: <span class="cs">"my note"</span>,
+  <span class="ck">"author"</span>: <span class="cs">"alice"</span>, <span class="ck">"tags"</span>: [<span class="cs">"python"</span>], <span class="ck">"priority"</span>: <span class="cs">"high"</span>,
+  <span class="ck">"created"</span>: <span class="cs">"2024-01-15T10:30:00"</span>, <span class="ck">"modified"</span>: <span class="cs">"2024-01-20T14:00:00"</span>,
+  <span class="ck">"body"</span>: <span class="cs">"# My Note\n\nContent here…"</span>
+}</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s404">404 Not Found</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="search-notes">
+      <div class="endpoint-head">
+        <span class="method get">GET</span>
+        <span class="path">/api/notes/search</span>
+        <span class="endpoint-desc">Search notes by keyword</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Searches filename, all YAML header fields, and body content. OR logic — a note is included if any keyword matches. Repeat <code style="font-family:var(--mono)">?q=</code> for multiple keywords, or use comma-separated values.</p>
+        <div class="sub-label">Query Parameters</div>
+        <table class="param-table">
+          <thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="pname">q</td><td class="ptype">string</td><td class="preq">required</td><td class="pdesc">Keyword to search. Repeat for multiple: <code>?q=python&amp;q=flask</code></td></tr>
+          </tbody>
+        </table>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{
+  <span class="ck">"query"</span>: [<span class="cs">"python"</span>, <span class="cs">"flask"</span>],
+  <span class="ck">"total"</span>: <span class="cv">3</span>,
+  <span class="ck">"notes"</span>: [
+    {
+      <span class="ck">"id"</span>: <span class="cv">1</span>, <span class="ck">"title"</span>: <span class="cs">"flask setup"</span>,
+      <span class="ck">"matched_keywords"</span>: [<span class="cs">"flask"</span>],
+      <span class="ck">"match_report"</span>: {
+        <span class="ck">"flask"</span>: {
+          <span class="ck">"locations"</span>: [<span class="cs">"header:title"</span>, <span class="cs">"body"</span>],
+          <span class="ck">"snippets"</span>: [<span class="cs">"…Install Flask with pip install flask…"</span>]
+        }
+      }
+    }
+  ]
+}</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s400">400 Bad Request</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="create-note">
+      <div class="endpoint-head">
+        <span class="method post">POST</span>
+        <span class="path">/api/notes</span>
+        <span class="endpoint-desc">Create a note</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Creates a new note file. The filename is derived from the title (slugified). If a file with that name already exists a numeric suffix is appended.</p>
+        <div class="sub-label">Request Body (JSON)</div>
+        <table class="param-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="pname">title</td><td class="ptype">string</td><td class="preq">required</td><td class="pdesc">Note title. Stored lowercase.</td></tr>
+            <tr><td class="pname">body</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Note content (plain text / Markdown)</td></tr>
+            <tr><td class="pname">author</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Author name. Stored lowercase.</td></tr>
+            <tr><td class="pname">tags</td><td class="ptype">string|array</td><td class="popt">optional</td><td class="pdesc">Comma-separated string or JSON array</td></tr>
+            <tr><td class="pname">priority</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">e.g. <code>high</code>, <code>low</code>, <code>1</code>–<code>5</code></td></tr>
+          </tbody>
+        </table>
+        <div class="sub-label">Response 201</div>
+        <div class="code-block">{ <span class="ck">"message"</span>: <span class="cs">"Note created."</span>, <span class="ck">"id"</span>: <span class="cv">7</span>, <span class="ck">"filename"</span>: <span class="cs">"my-note.md"</span>, <span class="ck">"title"</span>: <span class="cs">"my note"</span> }</div>
+        <div class="status-row"><span class="status s201">201 Created</span><span class="status s400">400 Bad Request</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="upload-note">
+      <div class="endpoint-head">
+        <span class="method post">POST</span>
+        <span class="path">/api/notes/upload</span>
+        <span class="endpoint-desc">Upload a note file</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Upload a <code style="font-family:var(--mono)">.md</code>, <code style="font-family:var(--mono)">.txt</code>, or <code style="font-family:var(--mono)">.note</code> file. If the file has no YAML front matter, a header is automatically prepended with the filename as the title.</p>
+        <div class="sub-label">Request (multipart/form-data)</div>
+        <table class="param-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="pname">file</td><td class="ptype">file</td><td class="preq">required</td><td class="pdesc">.md, .txt, or .note file</td></tr>
+            <tr><td class="pname">overwrite</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc"><code>"true"</code> to replace an existing note with the same filename. Default: <code>"false"</code> → 409 on conflict.</td></tr>
+          </tbody>
+        </table>
+        <div class="sub-label">Response 201</div>
+        <div class="code-block">{
+  <span class="ck">"message"</span>: <span class="cs">"Note uploaded."</span>, <span class="ck">"id"</span>: <span class="cv">8</span>,
+  <span class="ck">"filename"</span>: <span class="cs">"my-note.md"</span>, <span class="ck">"title"</span>: <span class="cs">"my note"</span>,
+  <span class="ck">"had_front_matter"</span>: <span class="cv">false</span>
+}</div>
+        <div class="status-row"><span class="status s201">201 Created</span><span class="status s400">400 Bad Request</span><span class="status s409">409 Conflict</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="update-note">
+      <div class="endpoint-head">
+        <span class="method put">PUT</span>
+        <span class="path">/api/notes/<span class="param">:id</span></span>
+        <span class="endpoint-desc">Update a note</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Update one or more fields of an existing note. Only supplied fields are changed. <code style="font-family:var(--mono)">modified</code> is always updated to now.</p>
+        <div class="sub-label">Request Body (JSON) — all fields optional</div>
+        <table class="param-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="pname">title</td><td class="ptype">string</td><td class="pdesc">New title (stored lowercase)</td></tr>
+            <tr><td class="pname">body</td><td class="ptype">string</td><td class="pdesc">Full replacement body</td></tr>
+            <tr><td class="pname">author</td><td class="ptype">string</td><td class="pdesc">Author name</td></tr>
+            <tr><td class="pname">tags</td><td class="ptype">string|array</td><td class="pdesc">Replacement tags</td></tr>
+            <tr><td class="pname">priority</td><td class="ptype">string</td><td class="pdesc">Priority value</td></tr>
+          </tbody>
+        </table>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{ <span class="ck">"message"</span>: <span class="cs">"Note updated."</span>, <span class="ck">"id"</span>: <span class="cv">1</span>, <span class="ck">"filename"</span>: <span class="cs">"my-note.md"</span>, <span class="ck">"modified"</span>: <span class="cs">"2024-03-01T12:00:00"</span> }</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s400">400 Bad Request</span><span class="status s404">404 Not Found</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="delete-note">
+      <div class="endpoint-head">
+        <span class="method del">DELETE</span>
+        <span class="path">/api/notes/<span class="param">:id</span></span>
+        <span class="endpoint-desc">Delete a note</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Permanently deletes the note file. This cannot be undone.</p>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{ <span class="ck">"message"</span>: <span class="cs">"Note 'my-note.md' deleted."</span>, <span class="ck">"id"</span>: <span class="cv">1</span> }</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s404">404 Not Found</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── STATS ───────────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-title">Stats</div>
+    <div class="endpoint" id="stats">
+      <div class="endpoint-head">
+        <span class="method get">GET</span>
+        <span class="path">/api/stats</span>
+        <span class="endpoint-desc">Aggregate note statistics</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Returns counts and breakdowns across all notes: total words, notes per author, notes per tag, notes per priority, and the 5 most recently modified.</p>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{
+  <span class="ck">"total_notes"</span>: <span class="cv">42</span>, <span class="ck">"total_words"</span>: <span class="cv">18430</span>, <span class="ck">"avg_words"</span>: <span class="cv">438</span>,
+  <span class="ck">"no_title"</span>: <span class="cv">0</span>, <span class="ck">"no_author"</span>: <span class="cv">5</span>, <span class="ck">"no_tags"</span>: <span class="cv">3</span>,
+  <span class="ck">"by_author"</span>:   { <span class="cs">"alice"</span>: <span class="cv">20</span>, <span class="cs">"bob"</span>: <span class="cv">22</span> },
+  <span class="ck">"by_priority"</span>: { <span class="cs">"high"</span>: <span class="cv">8</span>, <span class="cs">"low"</span>: <span class="cv">34</span> },
+  <span class="ck">"by_tag"</span>:      { <span class="cs">"python"</span>: <span class="cv">15</span>, <span class="cs">"flask"</span>: <span class="cv">7</span> },
+  <span class="ck">"recently_modified"</span>: [
+    { <span class="ck">"modified"</span>: <span class="cs">"2024-03-01T12:00:00"</span>, <span class="ck">"filename"</span>: <span class="cs">"flask-setup.md"</span> }
+  ]
+}</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DATASETS ────────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-title">Datasets</div>
+
+    <div class="endpoint" id="list-datasets">
+      <div class="endpoint-head">
+        <span class="method get">GET</span>
+        <span class="path">/api/datasets</span>
+        <span class="endpoint-desc">List all datasets</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Returns all datasets with their sidecar metadata. Datasets are <code style="font-family:var(--mono)">.csv</code> or <code style="font-family:var(--mono)">.json</code> files in <code style="font-family:var(--mono)">~/.notes/datasets/</code>.</p>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{
+  <span class="ck">"total"</span>: <span class="cv">3</span>,
+  <span class="ck">"datasets"</span>: [
+    {
+      <span class="ck">"id"</span>: <span class="cv">1</span>, <span class="ck">"filename"</span>: <span class="cs">"sales.csv"</span>, <span class="ck">"title"</span>: <span class="cs">"quarterly sales"</span>,
+      <span class="ck">"format"</span>: <span class="cs">"CSV"</span>, <span class="ck">"rows"</span>: <span class="cs">"1500"</span>, <span class="ck">"columns"</span>: <span class="cs">"8"</span>,
+      <span class="ck">"fields"</span>: [<span class="cs">"date"</span>, <span class="cs">"region"</span>, <span class="cs">"revenue"</span>],
+      <span class="ck">"author"</span>: <span class="cs">"alice"</span>, <span class="ck">"tags"</span>: [<span class="cs">"finance"</span>],
+      <span class="ck">"imported"</span>: <span class="cs">"2024-01-10"</span>, <span class="ck">"modified"</span>: <span class="cs">"2024-01-10"</span>
+    }
+  ]
+}</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="get-dataset">
+      <div class="endpoint-head">
+        <span class="method get">GET</span>
+        <span class="path">/api/datasets/<span class="param">:n</span></span>
+        <span class="endpoint-desc">Get one dataset's metadata</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Returns the full sidecar metadata for a single dataset by its list index (1-based).</p>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s404">404 Not Found</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="dataset-data">
+      <div class="endpoint-head">
+        <span class="method get">GET</span>
+        <span class="path">/api/datasets/<span class="param">:n</span>/data</span>
+        <span class="endpoint-desc">Get dataset rows (paginated)</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Parses and returns the full dataset contents as a list of rows. Supports pagination and keyword filtering.</p>
+        <div class="sub-label">Query Parameters</div>
+        <table class="param-table">
+          <thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="pname">page</td><td class="ptype">integer</td><td class="popt">optional</td><td class="pdesc">Page number, 1-based. Default: 1</td></tr>
+            <tr><td class="pname">per_page</td><td class="ptype">integer</td><td class="popt">optional</td><td class="pdesc">Rows per page, max 1000. Default: 100</td></tr>
+            <tr><td class="pname">q</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Filter rows — only rows containing this string (case-insensitive) in any cell are returned</td></tr>
+          </tbody>
+        </table>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{
+  <span class="ck">"filename"</span>: <span class="cs">"sales.csv"</span>, <span class="ck">"format"</span>: <span class="cs">"CSV"</span>, <span class="ck">"query"</span>: <span class="cs">"london"</span>,
+  <span class="ck">"columns"</span>: [<span class="cs">"date"</span>, <span class="cs">"region"</span>, <span class="cs">"revenue"</span>],
+  <span class="ck">"rows"</span>: [[<span class="cs">"2024-01-01"</span>, <span class="cs">"London"</span>, <span class="cs">"42000"</span>]],
+  <span class="ck">"total"</span>: <span class="cv">87</span>, <span class="ck">"page"</span>: <span class="cv">1</span>, <span class="ck">"per_page"</span>: <span class="cv">100</span>, <span class="ck">"pages"</span>: <span class="cv">1</span>
+}</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s404">404 Not Found</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="create-dataset">
+      <div class="endpoint-head">
+        <span class="method post">POST</span>
+        <span class="path">/api/datasets/create</span>
+        <span class="endpoint-desc">Create a blank dataset</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Creates a new empty dataset file from scratch. Dataset titles must be unique — a 409 is returned if a dataset with the same title already exists.</p>
+        <div class="sub-label">Request Body (JSON)</div>
+        <table class="param-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="pname">name</td><td class="ptype">string</td><td class="preq">required</td><td class="pdesc">Base filename (no extension). Sanitised to alphanumeric, dash, underscore.</td></tr>
+            <tr><td class="pname">format</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc"><code>"csv"</code> (default) or <code>"json"</code></td></tr>
+            <tr><td class="pname">columns</td><td class="ptype">array</td><td class="preq">required for CSV</td><td class="pdesc">List of column name strings</td></tr>
+            <tr><td class="pname">rows</td><td class="ptype">array</td><td class="popt">optional</td><td class="pdesc">Seed rows — list of <code>{col: value}</code> objects</td></tr>
+            <tr><td class="pname">title</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Human-readable title for the sidecar (defaults to name)</td></tr>
+            <tr><td class="pname">description, author, tags, priority</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Sidecar metadata fields</td></tr>
+          </tbody>
+        </table>
+        <div class="sub-label">Response 201</div>
+        <div class="code-block">{ <span class="ck">"message"</span>: <span class="cs">"Dataset created."</span>, <span class="ck">"filename"</span>: <span class="cs">"sales.csv"</span>, <span class="ck">"id"</span>: <span class="cv">4</span>, <span class="ck">"rows"</span>: <span class="cv">0</span>, <span class="ck">"columns"</span>: <span class="cv">3</span> }</div>
+        <div class="status-row"><span class="status s201">201 Created</span><span class="status s400">400 Bad Request</span><span class="status s409">409 Conflict</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="upload-dataset">
+      <div class="endpoint-head">
+        <span class="method post">POST</span>
+        <span class="path">/api/datasets/upload</span>
+        <span class="endpoint-desc">Upload a dataset file from browser</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Accepts a multipart file upload. Dataset titles must be unique (409 on duplicate). Large uploads can be cancelled mid-flight via <code style="font-family:var(--mono)">DELETE /api/upload/cancel/:id</code>.</p>
+        <div class="sub-label">Request (multipart/form-data)</div>
+        <table class="param-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="pname">file</td><td class="ptype">file</td><td class="preq">required</td><td class="pdesc">.csv or .json file</td></tr>
+            <tr><td class="pname">upload_id</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Client-generated UUID used to cancel this upload</td></tr>
+            <tr><td class="pname">title, description, author, tags, source_url, license, priority</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Sidecar metadata fields</td></tr>
+          </tbody>
+        </table>
+        <div class="sub-label">Response 201</div>
+        <div class="code-block">{ <span class="ck">"message"</span>: <span class="cs">"Dataset uploaded."</span>, <span class="ck">"filename"</span>: <span class="cs">"sales.csv"</span>, <span class="ck">"rows"</span>: <span class="cv">1500</span>, <span class="ck">"columns"</span>: <span class="cv">8</span>, <span class="ck">"parse_error"</span>: <span class="cv">null</span> }</div>
+        <div class="warn-box" style="margin-top:8px">If the upload is cancelled, the response is <code>200</code> with <code>{"cancelled": true}</code> rather than 201.</div>
+        <div class="status-row" style="margin-top:8px"><span class="status s201">201 Created</span><span class="status s200">200 Cancelled</span><span class="status s400">400 Bad Request</span><span class="status s409">409 Conflict</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="import-dataset">
+      <div class="endpoint-head">
+        <span class="method post">POST</span>
+        <span class="path">/api/datasets/import</span>
+        <span class="endpoint-desc">Import a file from server filesystem</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Copies a file that already exists on the server's filesystem into the datasets directory. Useful for server-side scripting. Dataset titles must be unique.</p>
+        <div class="sub-label">Request Body (JSON)</div>
+        <table class="param-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="pname">path</td><td class="ptype">string</td><td class="preq">required</td><td class="pdesc">Absolute or <code>~</code>-relative path to the source file</td></tr>
+            <tr><td class="pname">title, description, author, tags, source_url, license, priority</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Sidecar metadata</td></tr>
+          </tbody>
+        </table>
+        <div class="status-row"><span class="status s201">201 Created</span><span class="status s400">400 Bad Request</span><span class="status s409">409 Conflict</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="add-rows">
+      <div class="endpoint-head">
+        <span class="method post">POST</span>
+        <span class="path">/api/datasets/<span class="param">:n</span>/rows</span>
+        <span class="endpoint-desc">Append rows to a dataset</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Appends one or more rows to an existing dataset file. For CSV, each row must be an object with keys matching the existing column headers. The sidecar row count is updated automatically.</p>
+        <div class="sub-label">Request Body (JSON)</div>
+        <div class="code-block">{ <span class="ck">"rows"</span>: [{ <span class="ck">"date"</span>: <span class="cs">"2024-03-01"</span>, <span class="ck">"region"</span>: <span class="cs">"London"</span>, <span class="ck">"revenue"</span>: <span class="cs">"5000"</span> }] }</div>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{ <span class="ck">"message"</span>: <span class="cs">"1 row(s) added."</span>, <span class="ck">"rows_added"</span>: <span class="cv">1</span>, <span class="ck">"total_rows"</span>: <span class="cv">1501</span> }</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s400">400 Bad Request</span><span class="status s404">404 Not Found</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="add-columns">
+      <div class="endpoint-head">
+        <span class="method post">POST</span>
+        <span class="path">/api/datasets/<span class="param">:n</span>/columns</span>
+        <span class="endpoint-desc">Add columns to a dataset</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Adds new columns to an existing dataset. Existing rows receive the specified default value for each new column. Columns that already exist are silently skipped.</p>
+        <div class="sub-label">Request Body (JSON)</div>
+        <div class="code-block">{ <span class="ck">"columns"</span>: [{ <span class="ck">"name"</span>: <span class="cs">"score"</span>, <span class="ck">"default"</span>: <span class="cs">"0"</span> }, { <span class="ck">"name"</span>: <span class="cs">"verified"</span>, <span class="ck">"default"</span>: <span class="cs">"false"</span> }] }</div>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{ <span class="ck">"message"</span>: <span class="cs">"2 column(s) added."</span>, <span class="ck">"cols_added"</span>: [<span class="cs">"score"</span>, <span class="cs">"verified"</span>], <span class="ck">"total_columns"</span>: <span class="cv">10</span>, <span class="ck">"columns"</span>: [<span class="cs">"…"</span>] }</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s400">400 Bad Request</span><span class="status s404">404 Not Found</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="reupload-dataset">
+      <div class="endpoint-head">
+        <span class="method put">PUT</span>
+        <span class="path">/api/datasets/<span class="param">:n</span>/reupload</span>
+        <span class="endpoint-desc">Replace a dataset file</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Replaces an existing dataset file with a new upload. Existing sidecar metadata is preserved; row/column counts and <code style="font-family:var(--mono)">modified</code> are updated. Optionally override any metadata field via form fields.</p>
+        <div class="sub-label">Request (multipart/form-data)</div>
+        <table class="param-table">
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td class="pname">file</td><td class="ptype">file</td><td class="preq">required</td><td class="pdesc">Replacement .csv or .json file</td></tr>
+            <tr><td class="pname">upload_id</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Client UUID for cancellation support</td></tr>
+            <tr><td class="pname">title, description, author, tags, source_url, license, priority</td><td class="ptype">string</td><td class="popt">optional</td><td class="pdesc">Override specific metadata fields</td></tr>
+          </tbody>
+        </table>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{ <span class="ck">"message"</span>: <span class="cs">"Dataset reuploaded."</span>, <span class="ck">"filename"</span>: <span class="cs">"sales.csv"</span>, <span class="ck">"rows"</span>: <span class="cv">2100</span>, <span class="ck">"columns"</span>: <span class="cv">8</span> }</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s400">400 Bad Request</span><span class="status s404">404 Not Found</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint" id="delete-dataset">
+      <div class="endpoint-head">
+        <span class="method del">DELETE</span>
+        <span class="path">/api/datasets/<span class="param">:n</span></span>
+        <span class="endpoint-desc">Delete a dataset</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Deletes the dataset file and its <code style="font-family:var(--mono)">.dataset.yaml</code> sidecar. Cannot be undone.</p>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{ <span class="ck">"message"</span>: <span class="cs">"Dataset deleted."</span>, <span class="ck">"deleted"</span>: [<span class="cs">"sales.csv"</span>, <span class="cs">"sales.dataset.yaml"</span>] }</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s404">404 Not Found</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── UPLOADS ──────────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-title">Uploads</div>
+    <div class="endpoint" id="cancel-upload">
+      <div class="endpoint-head">
+        <span class="method del">DELETE</span>
+        <span class="path">/api/upload/cancel/<span class="param">:upload_id</span></span>
+        <span class="endpoint-desc">Cancel an in-progress upload</span>
+      </div>
+      <div class="endpoint-body">
+        <p class="endpoint-summary">Signals a running dataset upload (or reupload) to abort. The upload endpoint polls for this signal between chunks and during row parsing. The temp file is deleted on cancellation. <code style="font-family:var(--mono)">upload_id</code> must match the value sent in the original upload request.</p>
+        <div class="sub-label">Response 200</div>
+        <div class="code-block">{ <span class="ck">"message"</span>: <span class="cs">"Cancel signal sent."</span>, <span class="ck">"upload_id"</span>: <span class="cs">"abc123…"</span> }</div>
+        <div class="status-row"><span class="status s200">200 OK</span><span class="status s401">401 Unauthorized</span></div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// Highlight active nav link on scroll
+const sections = document.querySelectorAll('[id]');
+const links    = document.querySelectorAll('nav a[href^="#"]');
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(l => l.classList.remove('active'));
+      const active = document.querySelector(`nav a[href="#${e.target.id}"]`);
+      if (active) active.classList.add('active');
+    }
+  });
+}, {rootMargin: '-20% 0px -70% 0px'});
+sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

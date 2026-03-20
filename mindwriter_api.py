@@ -163,7 +163,7 @@ def _check_api_key() -> bool:
     return _secrets.compare_digest(provided, _API_KEY)
 
 # Public endpoints that do NOT require authentication
-_PUBLIC_PATHS = {"/", "/health", "/ping", "/api/auth/key"}
+_PUBLIC_PATHS = {"/", "/docs", "/health", "/ping", "/api/auth/key"}
 
 # ── Rate limiting ─────────────────────────────────────────────────────────
 
@@ -367,6 +367,39 @@ def serve_ui():
             404,
         )
     return ui.read_text(encoding="utf-8"), 200, {"Content-Type": "text/html"}
+
+
+def _find_docs() -> Path:
+    for p in [
+        Path(__file__).parent / "mindwriter_api_docs.html",
+        Path.cwd() / "mindwriter_api_docs.html",
+        Path.home() / "mindwriter_api_docs.html",
+    ]:
+        if p.exists():
+            return p
+    return Path(__file__).parent / "mindwriter_api_docs.html"
+
+
+@app.route("/docs")
+def serve_docs():
+    """Serve the API documentation page."""
+    docs = _find_docs()
+    if not docs.exists():
+        locs = "".join(
+            f"<li><code>{p}</code></li>"
+            for p in [
+                Path(__file__).parent / "mindwriter_api_docs.html",
+                Path.cwd() / "mindwriter_api_docs.html",
+                Path.home() / "mindwriter_api_docs.html",
+            ]
+        )
+        return (
+            "<h2>mindwriter_api_docs.html not found</h2>"
+            "<p>Place it in one of:</p>"
+            f"<ul>{locs}</ul>",
+            404,
+        )
+    return docs.read_text(encoding="utf-8"), 200, {"Content-Type": "text/html"}
 
 
 # ---------------------------------------------------------------------------
@@ -1680,6 +1713,7 @@ if __name__ == "__main__":
     count = len(collect_note_files(nd))
 
     print(f"\nMindWriter API  →  http://localhost:{port}")
+    print(f"API Docs        →  http://localhost:{port}/docs")
     print(f"Notes directory →  {nd}")
     print(f"Notes found     →  {count}")
     if not nd.exists():
