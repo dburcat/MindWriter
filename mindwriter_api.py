@@ -346,6 +346,262 @@ def get_api_key():
 
 
 # ---------------------------------------------------------------------------
+# SQLite full-text search index
+# ---------------------------------------------------------------------------
+# A lightweight SQLite database is maintained alongside the .md files as a
+# search index.  The files remain the single source of truth — the DB is
+# derived from them and can be rebuilt at any time.
+#
+# Schema:
+#   notes(filename, title, author, tags, priority, created, modified, body)
+#   notes_fts  — FTS5 virtual table covering all text columns
+#
+# Sync strategy:
+#   _sync_index() is called before every search / list request.
+#   It compares each file's mtime against what is stored in the DB and
+#   re-indexes only changed or new files.  Deleted files are removed.
+#   A full rebuild is triggered if the DB is missing or corrupt.
+# ---------------------------------------------------------------------------
+
+import sqlite3 as _sqlite3
+
+_DB_PATH: Path = Path.home() / ".notes" / "mindwriter.db"
+_db_conn: _sqlite3.Connection | None = None   # module-level connection
+
+
+def _db() -> _sqlite3.Connection:
+    """Return (and lazily create) the shared SQLite connection."""
+    global _db_conn, _DB_PATH
+    _DB_PATH = _notes_root() / "mindwriter.db"
+    if _db_conn is None:
+        try:
+            _db_conn = _sqlite3.connect(str(_DB_PATH), check_same_thread=False)
+            _db_conn.row_factory = _sqlite3.Row
+            _init_db(_db_conn)
+        except Exception as e:
+            print(f"  [index] could not open DB: {e}")
+            _db_conn = None
+            raise
+    return _db_conn
+
+
+def _init_db(conn: _sqlite3.Connection) -> None:
+    """Create tables if they don't exist."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS notes (
+            filename TEXT PRIMARY KEY,
+            title    TEXT,
+            author   TEXT,
+            tags     TEXT,
+            priority TEXT,
+            created  TEXT,
+            modified TEXT,
+            mtime    REAL,
+            body     TEXT
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
+        USING fts5(
+            filename, title, author, tags, priority, body,
+            content=notes,
+            content_rowid=rowid
+        );
+
+        CREATE TRIGGER IF NOT EXISTS notes_ai
+        AFTER INSERT ON notes BEGIN
+            INSERT INTO notes_fts(rowid, filename, title, author, tags, priority, body)
+            VALUES (new.rowid, new.filename, new.title, new.author,
+                    new.tags, new.priority, new.body);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS notes_ad
+        AFTER DELETE ON notes BEGIN
+            INSERT INTO notes_fts(notes_fts, rowid, filename, title, author,
+                                  tags, priority, body)
+            VALUES ('delete', old.rowid, old.filename, old.title, old.author,
+                    old.tags, old.priority, old.body);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS notes_au
+        AFTER UPDATE ON notes BEGIN
+            INSERT INTO notes_fts(notes_fts, rowid, filename, title, author,
+                                  tags, priority, body)
+            VALUES ('delete', old.rowid, old.filename, old.title, old.author,
+                    old.tags, old.priority, old.body);
+            INSERT INTO notes_fts(rowid, filename, title, author, tags,
+                                  priority, body)
+            VALUES (new.rowid, new.filename, new.title, new.author,
+                    new.tags, new.priority, new.body);
+        END;
+    """)
+    conn.commit()
+
+
+def _index_note(conn: _sqlite3.Connection, nf: Path) -> None:
+    """Insert or replace a single note in the index."""
+    try:
+        meta  = parse_yaml_header(nf)
+        body  = _get_body(nf)
+        mtime = nf.stat().st_mtime
+        conn.execute("""
+            INSERT OR REPLACE INTO notes
+                (filename, title, author, tags, priority, created, modified, mtime, body)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            nf.name,
+            (meta.get("title") or nf.stem).strip(),
+            meta.get("author", ""),
+            meta.get("tags", ""),
+            meta.get("priority", ""),
+            meta.get("created", ""),
+            meta.get("modified", ""),
+            mtime,
+            body,
+        ))
+    except Exception as e:
+        print(f"  [index] could not index {nf.name}: {e}")
+
+
+def _sync_index() -> None:
+    """
+    Bring the SQLite index in sync with the notes directory.
+    Only re-indexes files whose mtime has changed since the last sync.
+    Safe to call on every request — fast when nothing has changed.
+    """
+    try:
+        conn       = _db()
+        nd         = _notes_dir()
+        note_files = collect_note_files(nd)
+
+        # Build lookup of filename -> current mtime on disk
+        disk = {nf.name: nf.stat().st_mtime for nf in note_files}
+
+        # Build lookup of filename -> indexed mtime from DB
+        rows    = conn.execute("SELECT filename, mtime FROM notes").fetchall()
+        indexed = {r["filename"]: r["mtime"] for r in rows}
+
+        changed = False
+
+        # Remove deleted notes
+        for fname in list(indexed):
+            if fname not in disk:
+                conn.execute("DELETE FROM notes WHERE filename = ?", (fname,))
+                changed = True
+
+        # Add / update changed notes
+        nd_map = {nf.name: nf for nf in note_files}
+        for fname, mtime in disk.items():
+            if indexed.get(fname) != mtime:
+                _index_note(conn, nd_map[fname])
+                changed = True
+
+        if changed:
+            conn.commit()
+
+    except Exception as e:
+        # Index sync failure is non-fatal — fall back to file scan
+        print(f"  [index] sync failed: {e}")
+
+
+def _rebuild_index() -> None:
+    """Drop and recreate the entire index from the notes directory."""
+    global _db_conn
+    try:
+        if _db_conn:
+            _db_conn.close()
+            _db_conn = None
+        if _DB_PATH.exists():
+            _DB_PATH.unlink()
+        conn = _db()
+        nd   = _notes_dir()
+        for nf in collect_note_files(nd):
+            _index_note(conn, nf)
+        conn.commit()
+        print(f"  [index] rebuilt ({conn.execute('SELECT COUNT(*) FROM notes').fetchone()[0]} notes)")
+    except Exception as e:
+        print(f"  [index] rebuild failed: {e}")
+
+
+def _fts_search(keywords: list, nd: Path) -> list:
+    """
+    Search the FTS5 index for notes matching any keyword (OR logic).
+    Returns a list of (note_id, note_file, match_report) tuples in the
+    same format as the original file-scan search, so the route handler
+    needs no changes.
+    Falls back to file-scan on any DB error.
+    """
+    try:
+        conn       = _db()
+        note_files = collect_note_files(nd)
+        id_to_file, _ = build_index(note_files)
+        fname_to_id   = {nf.name: nid for nid, nf in id_to_file.items()}
+
+        # Build one FTS query that matches any keyword
+        fts_query = " OR ".join(f'"{kw}"' for kw in keywords)
+        rows = conn.execute(
+            "SELECT filename, title, author, tags, body FROM notes_fts WHERE notes_fts MATCH ?",
+            (fts_query,)
+        ).fetchall()
+
+        results = []
+        for row in rows:
+            fname = row["filename"]
+            nid   = fname_to_id.get(fname)
+            nf    = id_to_file.get(nid)
+            if nf is None:
+                continue   # file was deleted since last sync
+
+            body_lines = row["body"].splitlines(keepends=True) if row["body"] else []
+            meta_text  = " ".join(filter(None, [
+                row["title"], row["author"], row["tags"], row["priority"]
+            ])).lower()
+            stem = Path(fname).stem.lower()
+
+            match_report = {}
+            for kw in keywords:
+                locations = []
+                snippets  = []
+
+                if kw in stem:
+                    locations.append("filename")
+                if kw in meta_text:
+                    # Determine which specific header fields matched
+                    for field in ("title", "author", "tags", "priority"):
+                        if row[field] and kw in str(row[field]).lower():
+                            locations.append(f"header:{field}")
+                for i, line in enumerate(body_lines):
+                    if kw in line.lower():
+                        start = max(0, i - 1)
+                        end   = min(len(body_lines), i + 2)
+                        chunk = "".join(body_lines[start:end]).strip()
+                        if len(chunk) > 120:
+                            chunk = chunk[:117] + "…"
+                        snippets.append(chunk)
+                        locations.append("body")
+                        if len(snippets) >= 2:
+                            break
+
+                if locations:
+                    match_report[kw] = {
+                        "locations": list(dict.fromkeys(locations)),
+                        "snippets":  snippets,
+                    }
+
+            if match_report:
+                d = _note_to_dict(nid, nf)
+                d["matched_keywords"] = list(match_report.keys())
+                d["match_report"]     = match_report
+                results.append(d)
+
+        return results
+
+    except Exception as e:
+        print(f"  [index] FTS search failed, falling back to file scan: {e}")
+        return None   # caller interprets None as "use file scan"
+
+
+
+# ---------------------------------------------------------------------------
 # Serve the UI
 # ---------------------------------------------------------------------------
 
@@ -461,7 +717,8 @@ def list_notes():
         author  filter by author (exact, lowercase)
         sort    id | title | modified | created  (default: id)
     """
-    nd            = _notes_dir()
+    nd = _notes_dir()
+    _sync_index()   # keep DB in sync with filesystem
     note_files    = collect_note_files(nd)
     id_to_file, _ = build_index(note_files)
 
@@ -507,67 +764,68 @@ def search_notes():
     if not keywords:
         abort(400, description="Provide at least one keyword via ?q=keyword")
 
-    nd            = _notes_dir()
-    note_files    = collect_note_files(nd)
-    id_to_file, _ = build_index(note_files)
-    results       = []
+    nd = _notes_dir()
 
-    for nid, nf in id_to_file.items():
-        meta          = parse_yaml_header(nf)
-        filename_stem = nf.stem.lower()
+    # Sync the index, then try the fast FTS path first
+    _sync_index()
+    results = _fts_search(keywords, nd)
 
-        # Split body into lines for snippet extraction
-        try:
-            raw_lines = nf.read_text(encoding="utf-8").splitlines(keepends=True)
-        except Exception:
-            raw_lines = []
+    if results is None:
+        # FTS unavailable or failed — fall back to full file scan
+        note_files    = collect_note_files(nd)
+        id_to_file, _ = build_index(note_files)
+        results       = []
 
-        yaml_end = -1
-        if raw_lines and raw_lines[0].strip() == "---":
-            for i in range(1, len(raw_lines)):
-                if raw_lines[i].strip() == "---":
-                    yaml_end = i
-                    break
-        body_lines = raw_lines[yaml_end + 1:] if yaml_end != -1 else raw_lines
+        for nid, nf in id_to_file.items():
+            meta          = parse_yaml_header(nf)
+            filename_stem = nf.stem.lower()
 
-        match_report = {}
+            try:
+                raw_lines = nf.read_text(encoding="utf-8").splitlines(keepends=True)
+            except Exception:
+                raw_lines = []
 
-        for kw in keywords:
-            locations = []
-            snippets  = []
-
-            if kw in filename_stem:
-                locations.append("filename")
-
-            for field, value in meta.items():
-                if field == "file":
-                    continue
-                if kw in str(value).lower():
-                    locations.append(f"header:{field}")
-
-            for i, line in enumerate(body_lines):
-                if kw in line.lower():
-                    start = max(0, i - 1)
-                    end   = min(len(body_lines), i + 2)
-                    chunk = "".join(body_lines[start:end]).strip()
-                    if len(chunk) > 120:
-                        chunk = chunk[:117] + "…"
-                    snippets.append(chunk)
-                    locations.append("body")
-                    if len(snippets) >= 2:
+            yaml_end = -1
+            if raw_lines and raw_lines[0].strip() == "---":
+                for i in range(1, len(raw_lines)):
+                    if raw_lines[i].strip() == "---":
+                        yaml_end = i
                         break
+            body_lines = raw_lines[yaml_end + 1:] if yaml_end != -1 else raw_lines
 
-            if locations:
-                match_report[kw] = {
-                    "locations": list(dict.fromkeys(locations)),  # dedupe, keep order
-                    "snippets":  snippets,
-                }
+            match_report = {}
+            for kw in keywords:
+                locations = []
+                snippets  = []
 
-        if match_report:
-            d = _note_to_dict(nid, nf)
-            d["matched_keywords"] = list(match_report.keys())
-            d["match_report"]     = match_report
-            results.append(d)
+                if kw in filename_stem:
+                    locations.append("filename")
+                for field, value in meta.items():
+                    if field == "file":
+                        continue
+                    if kw in str(value).lower():
+                        locations.append(f"header:{field}")
+                for i, line in enumerate(body_lines):
+                    if kw in line.lower():
+                        start = max(0, i - 1)
+                        end   = min(len(body_lines), i + 2)
+                        chunk = "".join(body_lines[start:end]).strip()
+                        if len(chunk) > 120:
+                            chunk = chunk[:117] + "…"
+                        snippets.append(chunk)
+                        locations.append("body")
+                        if len(snippets) >= 2:
+                            break
+                if locations:
+                    match_report[kw] = {
+                        "locations": list(dict.fromkeys(locations)),
+                        "snippets":  snippets,
+                    }
+                if match_report:
+                    d = _note_to_dict(nid, nf)
+                    d["matched_keywords"] = list(match_report.keys())
+                    d["match_report"]     = match_report
+                    results.append(d)
 
     return jsonify({"query": keywords, "total": len(results), "notes": results})
 
@@ -644,6 +902,10 @@ def create_note():
     _, file_to_id = build_index(note_files)
     assigned_id   = file_to_id.get(dest, -1)
 
+    # Update search index
+    try: _index_note(_db(), dest); _db().commit()
+    except Exception: pass
+
     return jsonify({
         "message":  "Note created.",
         "id":       assigned_id,
@@ -692,6 +954,10 @@ def update_note(identifier):
     except Exception as e:
         abort(500, description=f"Could not update note file: {e}")
 
+    # Update search index
+    try: _index_note(_db(), nf); _db().commit()
+    except Exception: pass
+
     return jsonify({
         "message":  "Note updated.",
         "id":       nid,
@@ -712,7 +978,28 @@ def delete_note(identifier):
         nf.unlink()
     except Exception as e:
         abort(500, description=f"Could not delete note: {e}")
+    # Remove from search index
+    try: _db().execute("DELETE FROM notes WHERE filename = ?", (nf.name,)); _db().commit()
+    except Exception: pass
+
     return jsonify({"message": f"Note '{nf.name}' deleted.", "id": nid})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/index/rebuild  — manually rebuild the search index
+# ---------------------------------------------------------------------------
+
+@app.route("/api/index/rebuild", methods=["POST"])
+def rebuild_index():
+    """Force a full rebuild of the SQLite search index from the .md files."""
+    try:
+        _rebuild_index()
+        conn  = _db()
+        count = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        return jsonify({"message": "Index rebuilt.", "notes_indexed": count})
+    except Exception as e:
+        abort(500, description=f"Index rebuild failed: {e}")
+
 
 
 # ---------------------------------------------------------------------------
@@ -1571,12 +1858,15 @@ def get_dataset_data(dataset_id):
     op_id = str(_uuid.uuid4())
     _active_ops[op_id] = _time.monotonic()
 
+    # _active_ops is ONLY released in the finally block — never inside the
+    # try body. This guarantees the watchdog never sees a gap where the op
+    # appears finished while a slow file scan is still in progress.
+    parse_error_msg = None
     try:
         if suffix == ".csv":
             start = (page - 1) * per_page
             end   = start + per_page
 
-            # ── Check row-count cache (no-query requests only) ─────────────
             cached_total = None if query else _get_cached_row_count(ds)
 
             with open(ds, "r", encoding="utf-8", newline="") as f:
@@ -1584,77 +1874,7 @@ def get_dataset_data(dataset_id):
                 columns = list(reader.fieldnames or [])
 
                 if cached_total is not None:
-                    # Fast path: we know the total — only read until we have
-                    # the page window, then stop.
-                    matched = 0
-                    for raw_row in reader:
-                        row = [raw_row.get(c, "") for c in columns]
-                        if start <= matched < end:
-                            page_rows.append([_safe(v) for v in row])
-                        matched += 1
-                        if matched >= end:
-                            break   # done — no need to read further
-                    total       = cached_total
-                    total_exact = True
-                    _active_ops.pop(op_id, None)   # release immediately
-
-                else:
-                    # Slow path: stream the whole file.
-                    # If no query, kick off a background count after we have
-                    # the page rows so this request returns fast.
-                    page_collected = False
-                    for raw_row in reader:
-                        row = [raw_row.get(c, "") for c in columns]
-
-                        if query and not any(
-                            query in str(cell).lower() for cell in row
-                        ):
-                            continue
-
-                        if start <= total < end:
-                            page_rows.append([_safe(v) for v in row])
-                            if total + 1 == end and not query:
-                                # We have all the rows we need — but we still
-                                # need to finish counting. Hand off to background.
-                                page_collected = True
-
-                        total += 1
-
-                    if not query:
-                        # Cache result and write sidecar in background
-                        mtime = ds.stat().st_mtime
-                        _row_count_cache[str(ds)] = (mtime, total)
-                        # Sidecar update is cheap — do it inline
-                        try:
-                            meta = read_dataset_sidecar(ds)
-                            meta["rows"] = total
-                            _write_sidecar(ds, meta)
-                        except Exception:
-                            pass
-                    total_exact = True
-                    _active_ops.pop(op_id, None)
-
-        else:
-            # ── JSON → CSV cache ────────────────────────────────────────────
-            # Convert the JSON to a flat CSV on first access and store it in
-            # ~/.notes/datasets/.cache/.  All subsequent requests read the CSV
-            # with the same streaming fast-path used for native CSV files.
-            # The cache is automatically rebuilt when the source file changes.
-            try:
-                csv_cache = _get_or_build_json_csv_cache(ds)
-            except Exception as e:
-                abort(500, description=f"Could not build CSV cache for JSON dataset: {e}")
-
-            start = (page - 1) * per_page
-            end   = start + per_page
-
-            cached_total = _get_cached_row_count(csv_cache)
-
-            with open(csv_cache, "r", encoding="utf-8", newline="") as f:
-                reader  = csv.DictReader(f)
-                columns = list(reader.fieldnames or [])
-
-                if cached_total is not None:
+                    # Fast path — only read as far as the page window
                     matched = 0
                     for raw_row in reader:
                         row = [raw_row.get(c, "") for c in columns]
@@ -1665,7 +1885,9 @@ def get_dataset_data(dataset_id):
                             break
                     total       = cached_total
                     total_exact = True
+
                 else:
+                    # Slow path — stream the full file to get an exact count
                     for raw_row in reader:
                         row = [raw_row.get(c, "") for c in columns]
                         if query and not any(
@@ -1677,8 +1899,8 @@ def get_dataset_data(dataset_id):
                         total += 1
 
                     if not query:
-                        mtime = csv_cache.stat().st_mtime
-                        _row_count_cache[str(csv_cache)] = (mtime, total)
+                        mtime = ds.stat().st_mtime
+                        _row_count_cache[str(ds)] = (mtime, total)
                         try:
                             meta = read_dataset_sidecar(ds)
                             meta["rows"] = total
@@ -1686,12 +1908,66 @@ def get_dataset_data(dataset_id):
                         except Exception:
                             pass
                     total_exact = True
-            _active_ops.pop(op_id, None)
+
+        else:
+            # ── JSON → CSV cache ──────────────────────────────────────────
+            csv_cache = None
+            try:
+                csv_cache = _get_or_build_json_csv_cache(ds)
+            except Exception as e:
+                parse_error_msg = f"Could not build CSV cache for JSON dataset: {e}"
+
+            if csv_cache is not None:
+                start = (page - 1) * per_page
+                end   = start + per_page
+
+                cached_total = _get_cached_row_count(csv_cache)
+
+                with open(csv_cache, "r", encoding="utf-8", newline="") as f:
+                    reader  = csv.DictReader(f)
+                    columns = list(reader.fieldnames or [])
+
+                    if cached_total is not None:
+                        matched = 0
+                        for raw_row in reader:
+                            row = [raw_row.get(c, "") for c in columns]
+                            if start <= matched < end:
+                                page_rows.append([_safe(v) for v in row])
+                            matched += 1
+                            if matched >= end:
+                                break
+                        total       = cached_total
+                        total_exact = True
+                    else:
+                        for raw_row in reader:
+                            row = [raw_row.get(c, "") for c in columns]
+                            if query and not any(
+                                query in str(cell).lower() for cell in row
+                            ):
+                                continue
+                            if start <= total < end:
+                                page_rows.append([_safe(v) for v in row])
+                            total += 1
+
+                        if not query:
+                            mtime = csv_cache.stat().st_mtime
+                            _row_count_cache[str(csv_cache)] = (mtime, total)
+                            try:
+                                meta = read_dataset_sidecar(ds)
+                                meta["rows"] = total
+                                _write_sidecar(ds, meta)
+                            except Exception:
+                                pass
+                        total_exact = True
 
     except Exception as e:
-        abort(500, description=f"Could not parse dataset: {e}")
+        parse_error_msg = str(e)
     finally:
-        _active_ops.pop(op_id, None)   # belt-and-suspenders
+        # Always release the op — this is the only release point
+        _active_ops.pop(op_id, None)
+
+    if parse_error_msg:
+        abort(500, description=f"Could not parse dataset: {parse_error_msg}")
 
     pages = max(1, (total + per_page - 1) // per_page)
     page  = min(page, pages)
@@ -1708,6 +1984,213 @@ def get_dataset_data(dataset_id):
         "per_page":    per_page,
         "pages":       pages,
     })
+
+
+
+# ---------------------------------------------------------------------------
+# GET /api/datasets/<n>/profile  — statistical profile of every column
+# ---------------------------------------------------------------------------
+
+# Profile cache: ds_path -> (mtime, profile_dict)
+_profile_cache: dict = {}
+
+
+def _profile_csv(csv_path: Path) -> dict:
+    """
+    Stream a CSV and compute per-column statistics:
+      - count       total non-empty values
+      - empty       count of empty / null-string cells
+      - type        detected type: "number" | "date" | "text"
+      - min / max   (numbers and dates)
+      - mean / median / stdev  (numbers only)
+      - unique      number of distinct values
+      - top_values  up to 10 most-frequent values with counts
+    """
+    import csv as _csv, re as _re
+    from collections import Counter as _Counter
+    import statistics as _stats
+
+    DATE_RE = _re.compile(
+        r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$"
+    )
+
+    col_data: dict = {}   # col -> {"values": [...], "empty": int}
+
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader  = _csv.DictReader(f)
+        columns = list(reader.fieldnames or [])
+        for col in columns:
+            col_data[col] = {"raw": [], "empty": 0}
+        for row in reader:
+            for col in columns:
+                val = row.get(col, "")
+                if val == "" or val is None:
+                    col_data[col]["empty"] += 1
+                else:
+                    col_data[col]["raw"].append(val)
+
+    profile = {"columns": {}, "row_count": 0}
+
+    for col in columns:
+        raw    = col_data[col]["raw"]
+        empty  = col_data[col]["empty"]
+        count  = len(raw)
+        profile["row_count"] = count + empty  # same for every col
+
+        # ── Type detection ─────────────────────────────────────────────────
+        # Try to cast every non-empty value. Majority type wins.
+        nums   = []
+        is_num = True
+        is_dt  = True
+        for v in raw:
+            # number?
+            try:
+                nums.append(float(v.replace(",", "")))
+            except (ValueError, AttributeError):
+                is_num = False
+            # date?
+            if not DATE_RE.match(str(v)):
+                is_dt = False
+
+        if is_num and nums:
+            col_type = "number"
+        elif is_dt and raw:
+            col_type = "date"
+        else:
+            col_type = "text"
+
+        # ── Unique / top values ───────────────────────────────────────────
+        counter   = _Counter(raw)
+        unique    = len(counter)
+        top_values = [{"value": v, "count": c}
+                      for v, c in counter.most_common(10)]
+
+        # ── Numeric stats ─────────────────────────────────────────────────
+        col_min = col_max = col_mean = col_median = col_stdev = None
+        if col_type == "number" and nums:
+            col_min    = min(nums)
+            col_max    = max(nums)
+            col_mean   = round(sum(nums) / len(nums), 4)
+            col_median = _stats.median(nums)
+            col_stdev  = round(_stats.stdev(nums), 4) if len(nums) > 1 else 0.0
+            # Format: drop .0 for whole numbers
+            def _fmt(n):
+                return int(n) if n == int(n) else n
+            col_min    = _fmt(col_min)
+            col_max    = _fmt(col_max)
+            col_mean   = _fmt(col_mean)
+            col_median = _fmt(col_median)
+
+        # ── Date range ────────────────────────────────────────────────────
+        if col_type == "date" and raw:
+            sorted_dates = sorted(raw)
+            col_min = sorted_dates[0]
+            col_max = sorted_dates[-1]
+
+        stat = {
+            "type":       col_type,
+            "count":      count,
+            "empty":      empty,
+            "unique":     unique,
+            "top_values": top_values,
+        }
+        if col_min    is not None: stat["min"]    = col_min
+        if col_max    is not None: stat["max"]    = col_max
+        if col_mean   is not None: stat["mean"]   = col_mean
+        if col_median is not None: stat["median"] = col_median
+        if col_stdev  is not None: stat["stdev"]  = col_stdev
+
+        profile["columns"][col] = stat
+
+    return profile
+
+
+@app.route("/api/datasets/<int:dataset_id>/profile", methods=["GET"])
+def get_dataset_profile(dataset_id):
+    """
+    Return a statistical profile of every column in the dataset.
+
+    Query params:
+        refresh   pass "true" to force a rebuild even if cached
+
+    For CSV: streamed in a single pass, result cached in memory and
+             invalidated when the file changes.
+    For JSON: the JSON→CSV cache is profiled (built first if needed).
+
+    Response shape:
+        {
+          "filename":  "sales.csv",
+          "row_count": 15000,
+          "columns": {
+            "revenue": {
+              "type":       "number",
+              "count":      14987,
+              "empty":      13,
+              "unique":     4210,
+              "min":        0,
+              "max":        98430,
+              "mean":       3241.5,
+              "median":     2800,
+              "stdev":      1820.3,
+              "top_values": [{"value": "0", "count": 42}, ...]
+            },
+            "region": {
+              "type":       "text",
+              "count":      15000,
+              "empty":      0,
+              "unique":     6,
+              "top_values": [{"value": "London", "count": 3200}, ...]
+            }
+          }
+        }
+    """
+    datasets = _collect_datasets(_notes_root())
+    if dataset_id < 1 or dataset_id > len(datasets):
+        abort(404, description=f"Dataset {dataset_id} not found.")
+
+    ds      = datasets[dataset_id - 1]
+    suffix  = ds.suffix.lower()
+    refresh = request.args.get("refresh", "false").lower() == "true"
+
+    # Resolve the actual file to profile (use CSV cache for JSON)
+    if suffix == ".json":
+        try:
+            target = _get_or_build_json_csv_cache(ds)
+        except Exception as e:
+            abort(500, description=f"Could not build CSV cache for JSON: {e}")
+    else:
+        target = ds
+
+    # Check in-memory profile cache
+    cache_key = str(target)
+    if not refresh and cache_key in _profile_cache:
+        cached_mtime, cached_profile = _profile_cache[cache_key]
+        try:
+            if target.stat().st_mtime == cached_mtime:
+                return jsonify(cached_profile)
+        except OSError:
+            pass
+        del _profile_cache[cache_key]
+
+    # Register as active op so watchdog doesn't shut down during profiling
+    op_id = str(_uuid.uuid4())
+    _active_ops[op_id] = _time.monotonic()
+    try:
+        profile = _profile_csv(target)
+        profile["filename"] = ds.name
+    except Exception as e:
+        abort(500, description=f"Could not profile dataset: {e}")
+    finally:
+        _active_ops.pop(op_id, None)
+
+    # Cache result
+    try:
+        mtime = target.stat().st_mtime
+        _profile_cache[cache_key] = (mtime, profile)
+    except OSError:
+        pass
+
+    return jsonify(profile)
 
 
 
@@ -2020,6 +2503,14 @@ if __name__ == "__main__":
 
     # Start watchdog — shuts down when the browser tab closes
     threading.Thread(target=_watchdog, daemon=True).start()
+
+    # Build the search index on startup (fast — skips unchanged files)
+    try:
+        _sync_index()
+        count = _db().execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        print(f"  Search index    →  {count} note(s) indexed  ({_DB_PATH})")
+    except Exception as e:
+        print(f"  Search index    →  unavailable ({e})")
     print(f"  Auto-shutdown after {SHUTDOWN_TIMEOUT}s with no browser activity.")
     print()
 
