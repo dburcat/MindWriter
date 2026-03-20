@@ -863,6 +863,111 @@ def import_dataset():
 
 
 # ---------------------------------------------------------------------------
+# POST /api/datasets/create  — create a blank dataset from scratch
+# ---------------------------------------------------------------------------
+
+@app.route("/api/datasets/create", methods=["POST"])
+def create_dataset():
+    """
+    Create a new empty dataset file from scratch.
+
+    JSON body:
+        name         filename without extension, e.g. "my_data"  (required)
+        format       "csv" or "json"  (default: "csv")
+        columns      list of column name strings  (required for CSV,
+                     optional for JSON)
+        rows         optional list of row objects to seed the file with
+        title        sidecar metadata  (optional, defaults to name)
+        description  (optional)
+        author       (optional)
+        tags         (optional)
+        priority     (optional)
+
+    Returns the new dataset's filename and assigned list index.
+    """
+    import csv, json as pyjson
+
+    data    = request.get_json(silent=True) or {}
+    name    = (data.get("name") or "").strip()
+    fmt     = data.get("format", "csv").lower().strip()
+    columns = data.get("columns", [])
+    rows    = data.get("rows",    [])
+
+    if not name:
+        abort(400, description="'name' is required.")
+    if fmt not in ("csv", "json"):
+        abort(400, description="'format' must be 'csv' or 'json'.")
+    if fmt == "csv" and not columns:
+        abort(400, description="'columns' is required when format is 'csv'.")
+
+    # Sanitise filename
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+    suffix    = f".{fmt}"
+    ddir      = _ensure_datasets_dir(_notes_root())
+    if ddir is None:
+        abort(500, description="Could not create datasets directory.")
+
+    dest = ddir / f"{safe_name}{suffix}"
+    counter = 1
+    while dest.exists():
+        dest = ddir / f"{safe_name}_{counter}{suffix}"
+        counter += 1
+
+    try:
+        if fmt == "csv":
+            with open(dest, "w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=columns)
+                writer.writeheader()
+                for row in rows:
+                    if isinstance(row, dict):
+                        writer.writerow({c: row.get(c, "") for c in columns})
+        else:
+            # JSON — rows can be any structure; default to empty list
+            payload = rows if rows else []
+            with open(dest, "w", encoding="utf-8") as f:
+                pyjson.dump(payload, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        abort(500, description=f"Could not create dataset file: {e}")
+
+    # Build sidecar
+    now = datetime.now().isoformat()
+    tags_raw = data.get("tags", "")
+    tags = [t.strip().lower() for t in (tags_raw if isinstance(tags_raw, list) else str(tags_raw).split(",")) if str(t).strip()]
+    meta = {
+        "title":       (data.get("title") or safe_name.replace("_", " ").replace("-", " ")).lower(),
+        "description": data.get("description", ""),
+        "author":      data.get("author", "").lower(),
+        "tags":        tags,
+        "priority":    str(data.get("priority") or ""),
+        "format":      fmt.upper(),
+        "rows":        len(rows),
+        "columns":     len(columns),
+        "fields":      columns,
+        "imported":    now,
+        "modified":    now,
+        "original_filename": dest.name,
+    }
+    meta = {k: v for k, v in meta.items() if v != "" and v != [] and v != 0}
+    _write_sidecar(dest, meta)
+
+    # Return the new dataset's position in the list
+    all_ds = _collect_datasets(_notes_root())
+    try:
+        ds_id = next(i + 1 for i, d in enumerate(all_ds) if d == dest)
+    except StopIteration:
+        ds_id = -1
+
+    return jsonify({
+        "message":  "Dataset created.",
+        "filename": dest.name,
+        "id":       ds_id,
+        "rows":     len(rows),
+        "columns":  len(columns),
+    }), 201
+
+
+
+# ---------------------------------------------------------------------------
 # POST /api/datasets/upload  — upload a file directly from the browser
 # ---------------------------------------------------------------------------
 
@@ -1254,6 +1359,206 @@ def get_dataset_data(dataset_id):
         "page":     page,
         "per_page": per_page,
         "pages":    pages,
+    })
+
+
+
+# ---------------------------------------------------------------------------
+# POST /api/datasets/<n>/rows  — append one or more rows
+# ---------------------------------------------------------------------------
+
+@app.route("/api/datasets/<int:dataset_id>/rows", methods=["POST"])
+def add_rows(dataset_id):
+    """
+    Append rows to an existing dataset.
+
+    JSON body:
+        rows   list of objects (CSV/JSON) or list of lists
+               For CSV: [{"col1": "v1", "col2": "v2"}, ...]
+               For JSON: same structure is appended to the JSON array
+
+    Returns updated row count.
+    """
+    import csv, json as pyjson
+
+    datasets = _collect_datasets(_notes_root())
+    if dataset_id < 1 or dataset_id > len(datasets):
+        abort(404, description=f"Dataset {dataset_id} not found.")
+
+    ds     = datasets[dataset_id - 1]
+    suffix = ds.suffix.lower()
+    data   = request.get_json(silent=True) or {}
+    new_rows = data.get("rows", [])
+
+    if not new_rows or not isinstance(new_rows, list):
+        abort(400, description="'rows' must be a non-empty list.")
+
+    try:
+        if suffix == ".csv":
+            # Read existing to get column order
+            with open(ds, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                columns = list(reader.fieldnames or [])
+
+            if not columns:
+                abort(400, description="CSV has no header row — cannot append.")
+
+            # Validate incoming rows have the right keys
+            for i, row in enumerate(new_rows):
+                if not isinstance(row, dict):
+                    abort(400, description=f"Row {i} must be an object with keys matching the CSV columns.")
+
+            # Append rows
+            with open(ds, "a", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
+                for row in new_rows:
+                    writer.writerow({c: row.get(c, "") for c in columns})
+
+        else:  # JSON
+            with open(ds, "r", encoding="utf-8") as f:
+                existing = pyjson.load(f)
+
+            if not isinstance(existing, list):
+                abort(400, description="JSON dataset is not an array — cannot append rows.")
+
+            existing.extend(new_rows)
+
+            with open(ds, "w", encoding="utf-8") as f:
+                pyjson.dump(existing, f, indent=2, ensure_ascii=False)
+
+    except Exception as e:
+        abort(500, description=f"Could not append rows: {e}")
+
+    # Update sidecar row count
+    meta = read_dataset_sidecar(ds)
+    try:
+        meta["rows"] = int(meta.get("rows", 0)) + len(new_rows)
+    except (ValueError, TypeError):
+        meta["rows"] = len(new_rows)
+    meta["modified"] = datetime.now().isoformat()
+    _write_sidecar(ds, meta)
+
+    # Reload allDatasets cache hint
+    return jsonify({
+        "message":    f"{len(new_rows)} row(s) added.",
+        "rows_added": len(new_rows),
+        "total_rows": meta["rows"],
+    })
+
+
+# ---------------------------------------------------------------------------
+# POST /api/datasets/<n>/columns  — add one or more columns
+# ---------------------------------------------------------------------------
+
+@app.route("/api/datasets/<int:dataset_id>/columns", methods=["POST"])
+def add_columns(dataset_id):
+    """
+    Add one or more new columns to an existing dataset.
+    Existing rows get the specified default value for the new column.
+
+    JSON body:
+        columns   list of column definitions:
+                  [{"name": "score", "default": "0"}, ...]
+
+    Returns updated column list.
+    """
+    import csv, json as pyjson
+
+    datasets = _collect_datasets(_notes_root())
+    if dataset_id < 1 or dataset_id > len(datasets):
+        abort(404, description=f"Dataset {dataset_id} not found.")
+
+    ds     = datasets[dataset_id - 1]
+    suffix = ds.suffix.lower()
+    data   = request.get_json(silent=True) or {}
+    new_cols = data.get("columns", [])
+
+    if not new_cols or not isinstance(new_cols, list):
+        abort(400, description="'columns' must be a non-empty list of {name, default} objects.")
+
+    # Validate
+    for i, col in enumerate(new_cols):
+        if not isinstance(col, dict) or not col.get("name", "").strip():
+            abort(400, description=f"Column {i} must be an object with a 'name' field.")
+
+    try:
+        if suffix == ".csv":
+            # Read all rows
+            with open(ds, "r", encoding="utf-8", newline="") as f:
+                reader  = csv.DictReader(f)
+                old_cols = list(reader.fieldnames or [])
+                rows    = list(reader)
+
+            # Merge — skip columns that already exist
+            added = []
+            for col in new_cols:
+                name = col["name"].strip()
+                if name not in old_cols:
+                    old_cols.append(name)
+                    added.append(col)
+
+            if not added:
+                return jsonify({"message": "All columns already exist.", "columns": old_cols})
+
+            # Fill default values
+            for row in rows:
+                for col in added:
+                    row[col["name"].strip()] = str(col.get("default", ""))
+
+            # Rewrite file
+            with open(ds, "w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=old_cols)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            final_cols = old_cols
+
+        else:  # JSON
+            with open(ds, "r", encoding="utf-8") as f:
+                existing = pyjson.load(f)
+
+            if not isinstance(existing, list):
+                abort(400, description="JSON dataset is not an array — cannot add columns.")
+
+            # Determine current columns from first row
+            cur_cols = list(existing[0].keys()) if existing and isinstance(existing[0], dict) else []
+            added = []
+            for col in new_cols:
+                name = col["name"].strip()
+                if name not in cur_cols:
+                    cur_cols.append(name)
+                    added.append(col)
+
+            if not added:
+                return jsonify({"message": "All columns already exist.", "columns": cur_cols})
+
+            default_map = {col["name"].strip(): col.get("default", "") for col in added}
+            for row in existing:
+                if isinstance(row, dict):
+                    for name, default in default_map.items():
+                        if name not in row:
+                            row[name] = default
+
+            with open(ds, "w", encoding="utf-8") as f:
+                pyjson.dump(existing, f, indent=2, ensure_ascii=False)
+
+            final_cols = cur_cols
+
+    except Exception as e:
+        abort(500, description=f"Could not add columns: {e}")
+
+    # Update sidecar
+    meta = read_dataset_sidecar(ds)
+    meta["columns"]  = len(final_cols)
+    meta["fields"]   = final_cols
+    meta["modified"] = datetime.now().isoformat()
+    _write_sidecar(ds, meta)
+
+    return jsonify({
+        "message":      f"{len(added)} column(s) added.",
+        "cols_added":   [c["name"] for c in added],
+        "total_columns": len(final_cols),
+        "columns":      final_cols,
     })
 
 

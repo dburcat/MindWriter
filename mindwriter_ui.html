@@ -216,6 +216,26 @@ mark{background:rgba(184,240,80,.28);color:var(--text);border-radius:2px;padding
 .reupload-drop .rdz-chosen{font-size:11px;color:var(--text);font-family:var(--mono);margin-top:4px;display:none}
 #reupload-panel{display:none;flex-direction:column;gap:10px;background:var(--surf2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-top:8px}
 #reupload-panel .rp-hd{font-family:var(--mono);font-size:11px;color:var(--blue);letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px}
+
+/* dataset edit panel */
+.ds-edit-wrap{flex:1;overflow-y:auto;padding:4px 0;display:flex;flex-direction:column;gap:14px}
+.ds-edit-section{background:var(--surf2);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.ds-edit-section-hd{font-family:var(--mono);font-size:10px;color:var(--blue);letter-spacing:.08em;text-transform:uppercase;margin-bottom:2px}
+.row-grid{display:grid;gap:6px}
+.row-cell{background:var(--bg);border:1px solid var(--border);color:var(--text);font:inherit;font-family:var(--mono);font-size:12px;padding:5px 8px;border-radius:var(--r);outline:none;min-width:0}
+.row-cell:focus{border-color:var(--accent)}
+.col-def-row{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:center}
+.col-def-row input{background:var(--bg);border:1px solid var(--border);color:var(--text);font:inherit;font-size:12px;padding:5px 8px;border-radius:var(--r);outline:none}
+.col-def-row input:focus{border-color:var(--accent)}
+.rm-btn{background:none;border:1px solid var(--border);color:var(--muted);font-size:11px;padding:4px 7px;border-radius:3px;cursor:pointer;transition:color .12s,border-color .12s;flex-shrink:0}
+.rm-btn:hover{color:var(--danger);border-color:var(--danger)}
+.add-link{font-size:11px;color:var(--blue);cursor:pointer;background:none;border:none;font:inherit;padding:0;transition:color .12s}
+.add-link:hover{color:var(--accent)}
+
+/* create dataset form */
+.col-builder-row{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;margin-bottom:4px}
+.col-builder-row input{background:var(--bg);border:1px solid var(--border);color:var(--text);font:inherit;font-size:12px;padding:6px 9px;border-radius:var(--r);outline:none}
+.col-builder-row input:focus{border-color:var(--accent)}
 /* shared */
 .msg{color:var(--muted);font-family:var(--mono);font-size:12px;padding:40px;text-align:center}
 .err{color:var(--danger)}
@@ -344,15 +364,16 @@ mark{background:rgba(184,240,80,.28);color:var(--text);border-radius:2px;padding
 
         <!-- left: dataset list -->
         <div class="ds-sidebar">
-          <div class="ds-sidebar-head">
-            <button class="btn-new" id="btn-upload-dataset" style="width:100%">+ Upload Dataset</button>
+          <div class="ds-sidebar-head" style="display:flex;flex-direction:column;gap:6px">
+            <button class="btn-new" id="btn-new-dataset"    style="width:100%">+ New Dataset</button>
+            <button class="btn-new" id="btn-upload-dataset" style="width:100%;background:var(--surf2);color:var(--text);border:1px solid var(--border)">⬆ Upload Dataset</button>
           </div>
           <div id="ds-list"><div class="msg" style="padding:20px">Loading…</div></div>
         </div>
 
         <!-- right: detail / upload form -->
         <div class="ds-content" id="ds-content">
-          <div class="empty-pane"><div class="big">◎</div><div>Select a dataset or upload a new one</div></div>
+          <div class="empty-pane"><div class="big">◎</div><div>Select a dataset, create a new one, or upload a file</div></div>
         </div>
 
       </div>
@@ -747,6 +768,7 @@ function renderDatasetMeta(id) {
     <div class="ds-tabs">
       <button class="ds-tab active" id="tab-meta">Info</button>
       <button class="ds-tab"       id="tab-data">Data</button>
+      <button class="ds-tab"       id="tab-edit">Edit</button>
     </div>
     <div id="ds-panel-meta">
       <div class="ds-card">
@@ -787,13 +809,18 @@ function renderDatasetMeta(id) {
     </div>
     <div id="ds-panel-data" style="display:none;flex:1;overflow:hidden;flex-direction:column">
       <div class="msg">Loading data…</div>
+    </div>
+    <div id="ds-panel-edit" style="display:none;flex:1;overflow:hidden;flex-direction:column">
+      <div class="msg">Loading…</div>
     </div>`;
 
   document.getElementById('tab-meta').addEventListener('click', () => {
     document.getElementById('tab-meta').classList.add('active');
     document.getElementById('tab-data').classList.remove('active');
+    document.getElementById('tab-edit') && document.getElementById('tab-edit').classList.remove('active');
     document.getElementById('ds-panel-meta').style.display = '';
     document.getElementById('ds-panel-data').style.display = 'none';
+    document.getElementById('ds-panel-edit') && (document.getElementById('ds-panel-edit').style.display = 'none');
   });
 
   // Action buttons wired after renderDatasetMeta
@@ -803,9 +830,21 @@ function renderDatasetMeta(id) {
   document.getElementById('tab-data').addEventListener('click', () => {
     document.getElementById('tab-data').classList.add('active');
     document.getElementById('tab-meta').classList.remove('active');
+    document.getElementById('tab-edit').classList.remove('active');
     document.getElementById('ds-panel-meta').style.display = 'none';
     document.getElementById('ds-panel-data').style.display = 'flex';
+    document.getElementById('ds-panel-edit').style.display = 'none';
     dsSearchQuery = ''; loadDatasetPage(id, dsCurrentPage, '');
+  });
+
+  document.getElementById('tab-edit').addEventListener('click', () => {
+    document.getElementById('tab-edit').classList.add('active');
+    document.getElementById('tab-meta').classList.remove('active');
+    document.getElementById('tab-data').classList.remove('active');
+    document.getElementById('ds-panel-meta').style.display = 'none';
+    document.getElementById('ds-panel-data').style.display = 'none';
+    document.getElementById('ds-panel-edit').style.display = 'flex';
+    renderEditPanel(id);
   });
 }
 
@@ -1021,8 +1060,452 @@ function openReupload(id) {
   };
 }
 
+
+// ── dataset edit panel ────────────────────────────────────────────────────
+
+async function renderEditPanel(id) {
+  const panel = document.getElementById('ds-panel-edit');
+  if (!panel) return;
+  panel.innerHTML = '<div class="msg">Loading…</div>';
+
+  // Fetch current columns from the data endpoint
+  let columns = [];
+  try {
+    const d = await apiFetch(`/api/datasets/${id}/data?per_page=1`);
+    columns = d.columns || [];
+  } catch(e) {
+    panel.innerHTML = `<div class="msg err">${esc(e.message)}</div>`;
+    return;
+  }
+
+  panel.innerHTML = `<div class="ds-edit-wrap" id="edit-wrap">
+
+    <!-- ── Add Rows ─────────────────────────────────────────────────── -->
+    <div class="ds-edit-section">
+      <div class="ds-edit-section-hd">Add Rows</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
+        Fill in values for each column. Click <b>+ Row</b> to add more rows before saving.
+      </div>
+      <div id="rows-grid"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:2px">
+        <button class="add-link" id="add-row-btn">+ Row</button>
+      </div>
+      <div class="f-actions" style="padding-top:4px">
+        <button class="btn" id="save-rows-btn">Save Rows</button>
+      </div>
+      <div class="f-msg" id="rows-msg"></div>
+    </div>
+
+    <!-- ── Add Columns ──────────────────────────────────────────────── -->
+    <div class="ds-edit-section">
+      <div class="ds-edit-section-hd">Add Columns</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
+        Specify a name and default value for each new column.
+        Existing rows will get the default value.
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:6px;font-size:10px;color:var(--muted);font-family:var(--mono);padding-bottom:4px">
+        <span>COLUMN NAME</span><span>DEFAULT VALUE</span><span></span>
+      </div>
+      <div id="cols-grid"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:2px">
+        <button class="add-link" id="add-col-btn">+ Column</button>
+      </div>
+      <div class="f-actions" style="padding-top:4px">
+        <button class="btn" id="save-cols-btn">Save Columns</button>
+      </div>
+      <div class="f-msg" id="cols-msg"></div>
+    </div>
+
+  </div>`;
+
+  // ── Row management ─────────────────────────────────────────────────────
+  const rowsGrid = document.getElementById('rows-grid');
+
+  // Set up grid template based on column count
+  function updateRowGrid() {
+    const cols = columns.length;
+    rowsGrid.style.display = 'grid';
+    rowsGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    rowsGrid.style.gap = '4px';
+  }
+  updateRowGrid();
+
+  // Header row
+  function renderRowHeader() {
+    columns.forEach(col => {
+      const h = document.createElement('div');
+      h.style.cssText = 'font-size:10px;color:var(--blue);font-family:var(--mono);padding:2px 4px;letter-spacing:.04em;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      h.title = col;
+      h.textContent = col;
+      rowsGrid.appendChild(h);
+    });
+  }
+  renderRowHeader();
+
+  let rowCount = 0;
+
+  function addRowInputs() {
+    rowCount++;
+    const rowIdx = rowCount;
+    columns.forEach((col, ci) => {
+      const inp = document.createElement('input');
+      inp.className = 'row-cell';
+      inp.placeholder = col;
+      inp.dataset.rowIdx = rowIdx;
+      inp.dataset.colIdx = ci;
+      inp.dataset.col    = col;
+      rowsGrid.appendChild(inp);
+    });
+  }
+  addRowInputs(); // start with one empty row
+
+  document.getElementById('add-row-btn').addEventListener('click', addRowInputs);
+
+  document.getElementById('save-rows-btn').addEventListener('click', async () => {
+    const msgEl = document.getElementById('rows-msg');
+    // Collect all rows
+    const rowMap = {};
+    rowsGrid.querySelectorAll('.row-cell').forEach(inp => {
+      const ri = inp.dataset.rowIdx;
+      if (!rowMap[ri]) rowMap[ri] = {};
+      rowMap[ri][inp.dataset.col] = inp.value;
+    });
+    const rows = Object.values(rowMap).filter(r => Object.values(r).some(v => v.trim()));
+    if (!rows.length) {
+      msgEl.textContent = 'Enter at least one row of data.';
+      msgEl.className = 'f-msg err'; msgEl.style.display = 'block'; return;
+    }
+    msgEl.style.display = 'none';
+    document.getElementById('save-rows-btn').disabled = true;
+    document.getElementById('save-rows-btn').textContent = 'Saving…';
+    try {
+      const res = await apiFetch(`/api/datasets/${id}/rows`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({rows}),
+      });
+      msgEl.textContent = res.message + ' Total: ' + res.total_rows + ' rows.';
+      msgEl.className = 'f-msg ok'; msgEl.style.display = 'block';
+      // Clear inputs
+      rowsGrid.querySelectorAll('.row-cell').forEach(i => i.value = '');
+      // Refresh dataset list so row count updates
+      datasetsLoaded = false; await loadDatasets(true);
+    } catch(e) {
+      msgEl.textContent = e.message; msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+    } finally {
+      document.getElementById('save-rows-btn').disabled = false;
+      document.getElementById('save-rows-btn').textContent = 'Save Rows';
+    }
+  });
+
+  // ── Column management ──────────────────────────────────────────────────
+  const colsGrid = document.getElementById('cols-grid');
+  let colDefCount = 0;
+
+  function addColDef() {
+    colDefCount++;
+    const row = document.createElement('div');
+    row.className = 'col-def-row';
+    row.dataset.idx = colDefCount;
+    row.innerHTML = `
+      <input class="col-name" type="text" placeholder="column_name" autocomplete="off"/>
+      <input class="col-default" type="text" placeholder="default value"/>
+      <button class="rm-btn" title="Remove">✕</button>`;
+    row.querySelector('.rm-btn').addEventListener('click', () => row.remove());
+    colsGrid.appendChild(row);
+  }
+  addColDef(); // start with one empty definition
+
+  document.getElementById('add-col-btn').addEventListener('click', addColDef);
+
+  document.getElementById('save-cols-btn').addEventListener('click', async () => {
+    const msgEl = document.getElementById('cols-msg');
+    const defs = [];
+    colsGrid.querySelectorAll('.col-def-row').forEach(row => {
+      const name = row.querySelector('.col-name').value.trim();
+      const def  = row.querySelector('.col-default').value;
+      if (name) defs.push({name, default: def});
+    });
+    if (!defs.length) {
+      msgEl.textContent = 'Enter at least one column name.';
+      msgEl.className = 'f-msg err'; msgEl.style.display = 'block'; return;
+    }
+    msgEl.style.display = 'none';
+    document.getElementById('save-cols-btn').disabled = true;
+    document.getElementById('save-cols-btn').textContent = 'Saving…';
+    try {
+      const res = await apiFetch(`/api/datasets/${id}/columns`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({columns: defs}),
+      });
+      msgEl.textContent = res.message + ' Total: ' + res.total_columns + ' columns.';
+      msgEl.className = 'f-msg ok'; msgEl.style.display = 'block';
+      // Update local columns list and re-render rows header
+      columns = res.columns;
+      updateRowGrid();
+      rowsGrid.innerHTML = '';
+      renderRowHeader();
+      rowCount = 0;
+      addRowInputs();
+      // Refresh sidebar
+      datasetsLoaded = false; await loadDatasets(true);
+    } catch(e) {
+      msgEl.textContent = e.message; msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+    } finally {
+      document.getElementById('save-cols-btn').disabled = false;
+      document.getElementById('save-cols-btn').textContent = 'Save Columns';
+    }
+  });
+}
+
+
+// ── create new dataset ─────────────────────────────────────────────────────
+function showCreateForm() {
+  document.querySelectorAll('.ds-row').forEach(r => r.classList.remove('sel'));
+  const dsContent = document.getElementById('ds-content');
+  dsContent.innerHTML = `
+    <div class="up-form">
+      <div class="up-hd">+ New Dataset</div>
+
+      <!-- format toggle -->
+      <div class="f-row">
+        <label>Format</label>
+        <div style="display:flex;gap:6px">
+          <button class="btn" id="fmt-csv" style="flex:1">CSV</button>
+          <button class="btn-ghost" id="fmt-json" style="flex:1">JSON</button>
+        </div>
+      </div>
+
+      <div class="f-row-2">
+        <div class="f-row" style="flex:2">
+          <label>Dataset Name *</label>
+          <input id="create-name" type="text" placeholder="e.g. sales_data"/>
+        </div>
+        <div class="f-row" style="flex:1">
+          <label>Title</label>
+          <input id="create-title" type="text" placeholder="Human-readable title"/>
+        </div>
+      </div>
+      <div class="f-row">
+        <label>Description</label>
+        <input id="create-desc" type="text" placeholder="What is this dataset about?"/>
+      </div>
+      <div class="f-row-2">
+        <div class="f-row">
+          <label>Author</label>
+          <input id="create-author" type="text"/>
+        </div>
+        <div class="f-row">
+          <label>Tags</label>
+          <input id="create-tags" type="text" placeholder="finance, q3"/>
+        </div>
+      </div>
+
+      <!-- columns section (hidden for JSON if user prefers) -->
+      <div id="columns-section" class="f-row">
+        <label>Columns <span id="col-fmt-hint" style="color:var(--muted);font-weight:400">(required for CSV)</span></label>
+        <div id="col-builder"></div>
+        <button class="add-link" id="add-col-create-btn" style="margin-top:4px">+ Add Column</button>
+      </div>
+
+      <!-- seed rows -->
+      <div class="f-row">
+        <label>Seed Rows <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <div id="seed-row-area">
+          <div style="font-size:11px;color:var(--muted)">Add columns first, then seed rows will appear here.</div>
+        </div>
+        <button class="add-link" id="add-seed-row-btn" style="margin-top:4px;display:none">+ Add Row</button>
+      </div>
+
+      <div class="f-actions">
+        <button class="btn"       id="create-submit">Create Dataset</button>
+        <button class="btn-ghost" id="create-cancel">Cancel</button>
+      </div>
+      <div class="f-msg" id="create-msg"></div>
+    </div>`;
+
+  let createFmt = 'csv';
+  let createCols = [];    // list of column name strings
+  let seedRows   = [];    // list of {col: value} objects tracked via DOM
+
+  // Format toggle
+  document.getElementById('fmt-csv').addEventListener('click', () => {
+    createFmt = 'csv';
+    document.getElementById('fmt-csv').className  = 'btn';
+    document.getElementById('fmt-json').className = 'btn-ghost';
+    document.getElementById('col-fmt-hint').textContent = '(required for CSV)';
+  });
+  document.getElementById('fmt-json').addEventListener('click', () => {
+    createFmt = 'json';
+    document.getElementById('fmt-json').className = 'btn';
+    document.getElementById('fmt-csv').className  = 'btn-ghost';
+    document.getElementById('col-fmt-hint').textContent = '(optional for JSON)';
+  });
+
+  // Column builder
+  const colBuilder = document.getElementById('col-builder');
+
+  // seedData[rowIndex][colName] = value — source of truth for seed rows,
+  // kept in sync with the DOM so rebuilds never lose data.
+  const seedData = {};   // { "0": { "name": "Alice", ... }, "1": { ... } }
+  let   seedRowCount = 0;
+
+  function snapshotSeedData() {
+    const seedArea = document.getElementById('seed-row-area');
+    if (!seedArea) return;
+    seedArea.querySelectorAll('.seed-cell').forEach(inp => {
+      const ri = inp.dataset.row;
+      if (!seedData[ri]) seedData[ri] = {};
+      seedData[ri][inp.dataset.col] = inp.value;
+    });
+  }
+
+  function refreshSeedGrid() {
+    // Snapshot current DOM values before wiping anything
+    snapshotSeedData();
+
+    const names = Array.from(colBuilder.querySelectorAll('.col-name-inp'))
+                        .map(i => i.value.trim()).filter(Boolean);
+    createCols = names;
+    const seedArea  = document.getElementById('seed-row-area');
+    const addRowBtn = document.getElementById('add-seed-row-btn');
+
+    if (!names.length) {
+      seedArea.innerHTML = '<div style="font-size:11px;color:var(--muted)">Add columns first, then seed rows will appear here.</div>';
+      addRowBtn.style.display = 'none';
+      return;
+    }
+
+    addRowBtn.style.display = '';
+    seedArea.style.display = 'grid';
+    seedArea.style.gridTemplateColumns = `repeat(${names.length}, 1fr)`;
+    seedArea.style.gap = '4px';
+    seedArea.style.marginBottom = '4px';
+    seedArea.innerHTML = '';
+
+    // Column headers
+    names.forEach(n => {
+      const h = document.createElement('div');
+      h.style.cssText = 'font-size:10px;color:var(--blue);font-family:var(--mono);padding:2px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      h.title = n; h.textContent = n;
+      seedArea.appendChild(h);
+    });
+
+    // Restore all rows from seedData, keeping values keyed by column name
+    for (let ri = 0; ri < seedRowCount; ri++) {
+      names.forEach(col => {
+        const inp = document.createElement('input');
+        inp.className = 'row-cell seed-cell';
+        inp.dataset.col = col;
+        inp.dataset.row = ri;
+        inp.placeholder = col;
+        inp.value = (seedData[ri] && seedData[ri][col] !== undefined)
+                    ? seedData[ri][col] : '';
+        // Keep seedData in sync as user types
+        inp.addEventListener('input', () => {
+          if (!seedData[ri]) seedData[ri] = {};
+          seedData[ri][col] = inp.value;
+        });
+        seedArea.appendChild(inp);
+      });
+    }
+  }
+
+  function addColInput() {
+    const row = document.createElement('div');
+    row.className = 'col-builder-row';
+    row.innerHTML = `<input class="col-name-inp" type="text" placeholder="column name" autocomplete="off"/>
+                     <button class="rm-btn" title="Remove">✕</button>`;
+    row.querySelector('.rm-btn').addEventListener('click', () => { row.remove(); refreshSeedGrid(); });
+    row.querySelector('.col-name-inp').addEventListener('input', refreshSeedGrid);
+    colBuilder.appendChild(row);
+    row.querySelector('.col-name-inp').focus();
+    refreshSeedGrid();
+  }
+
+  document.getElementById('add-col-create-btn').addEventListener('click', addColInput);
+  addColInput(); // start with one column
+
+  document.getElementById('add-seed-row-btn').addEventListener('click', () => {
+    const names = Array.from(colBuilder.querySelectorAll('.col-name-inp'))
+                       .map(i => i.value.trim()).filter(Boolean);
+    if (!names.length) return;
+    // Initialise the new row in seedData then let refreshSeedGrid render it
+    seedData[seedRowCount] = {};
+    seedRowCount++;
+    refreshSeedGrid();
+  });
+
+  document.getElementById('create-cancel').addEventListener('click', () => {
+    dsContent.innerHTML = '<div class="empty-pane"><div class="big">◎</div><div>Select a dataset, create a new one, or upload a file</div></div>';
+  });
+
+  document.getElementById('create-submit').addEventListener('click', async () => {
+    const msgEl     = document.getElementById('create-msg');
+    const submitBtn = document.getElementById('create-submit');
+    const name = document.getElementById('create-name').value.trim();
+    if (!name) {
+      msgEl.textContent = 'Dataset name is required.';
+      msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+      document.getElementById('create-name').focus(); return;
+    }
+
+    // Collect columns
+    const cols = Array.from(colBuilder.querySelectorAll('.col-name-inp'))
+                      .map(i => i.value.trim()).filter(Boolean);
+    if (createFmt === 'csv' && !cols.length) {
+      msgEl.textContent = 'Add at least one column for a CSV dataset.';
+      msgEl.className = 'f-msg err'; msgEl.style.display = 'block'; return;
+    }
+
+    // Collect seed rows
+    const seedArea = document.getElementById('seed-row-area');
+    const rowMap = {};
+    seedArea.querySelectorAll('.seed-cell').forEach(inp => {
+      const ri = inp.dataset.row;
+      if (!rowMap[ri]) rowMap[ri] = {};
+      rowMap[ri][inp.dataset.col] = inp.value;
+    });
+    const rows = Object.values(rowMap).filter(r => Object.values(r).some(v => v.trim()));
+
+    submitBtn.disabled = true; submitBtn.textContent = 'Creating…';
+    msgEl.style.display = 'none';
+
+    try {
+      const res = await apiFetch('/api/datasets/create', {
+        method:  'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          name,
+          format:      createFmt,
+          columns:     cols,
+          rows,
+          title:       document.getElementById('create-title').value.trim(),
+          description: document.getElementById('create-desc').value.trim(),
+          author:      document.getElementById('create-author').value.trim(),
+          tags:        document.getElementById('create-tags').value.trim(),
+        }),
+      });
+      msgEl.textContent = `Created: ${res.filename} (${res.columns} columns, ${res.rows} rows)`;
+      msgEl.className = 'f-msg ok'; msgEl.style.display = 'block';
+      datasetsLoaded = false;
+      await loadDatasets(true);
+      setTimeout(() => {
+        const newDs = allDatasets.find(d => d.filename === res.filename);
+        if (newDs) openDataset(newDs.id);
+      }, 400);
+    } catch(e) {
+      msgEl.textContent = e.message; msgEl.className = 'f-msg err'; msgEl.style.display = 'block';
+    } finally {
+      submitBtn.disabled = false; submitBtn.textContent = 'Create Dataset';
+    }
+  });
+}
+
 // ── upload form ───────────────────────────────────────────────────────────
 document.getElementById('btn-upload-dataset').addEventListener('click', showUploadForm);
+document.getElementById('btn-new-dataset').addEventListener('click', showCreateForm);
 
 function showUploadForm() {
   document.querySelectorAll('.ds-row').forEach(r => r.classList.remove('sel'));
