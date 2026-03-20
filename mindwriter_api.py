@@ -2498,7 +2498,8 @@ if __name__ == "__main__":
         time.sleep(1.0)
         webbrowser.open(f"http://localhost:{port}/")
 
-    if not debug:
+    gui_started=os.environ.get('MINDWRITER_GUI_STARTED')=='1'
+    if not debug and not gui_started:
         threading.Thread(target=open_browser, daemon=True).start()
 
     # Start watchdog — shuts down when the browser tab closes
