@@ -1068,8 +1068,14 @@ async function loadDatasetPage(id, page, query) {
       }).join('') + '</tr>'
     ).join('') + '</tbody>';
 
-    const pageStart = (page - 1) * d.per_page + 1;
-    const pageEnd   = Math.min(page * d.per_page, d.total);
+    const pageStart  = (page - 1) * d.per_page + 1;
+    const pageEnd    = Math.min(page * d.per_page, d.total);
+    const totalLabel = d.total_exact === false
+      ? `${d.total.toLocaleString()}+ (counting…)`
+      : d.total.toLocaleString();
+    const pageLabel  = d.total_exact === false
+      ? `page ${page}`
+      : `page ${page} / ${d.pages}`;
 
     tableArea.innerHTML = `
       <div class="ds-table-wrap">
@@ -1078,10 +1084,10 @@ async function loadDatasetPage(id, page, query) {
       <div class="ds-pagination">
         <button id="pg-first" ${page<=1?'disabled':''}>«</button>
         <button id="pg-prev"  ${page<=1?'disabled':''}>‹</button>
-        <span class="pg-info">rows ${pageStart}–${pageEnd} of ${d.total.toLocaleString()}</span>
-        <button id="pg-next" ${page>=d.pages?'disabled':''}>›</button>
-        <button id="pg-last" ${page>=d.pages?'disabled':''}>»</button>
-        <span style="margin-left:auto;font-family:var(--mono)">page ${page} / ${d.pages}</span>
+        <span class="pg-info">rows ${pageStart}–${pageEnd} of ${totalLabel}</span>
+        <button id="pg-next" ${d.rows.length < d.per_page && d.total_exact !== false ? 'disabled' : ''}>›</button>
+        <button id="pg-last" ${page>=d.pages && d.total_exact !== false ? 'disabled' : ''}>»</button>
+        <span style="margin-left:auto;font-family:var(--mono)">${pageLabel}</span>
       </div>`;
 
     document.getElementById('pg-first').addEventListener('click', () => loadDatasetPage(id, 1,        query));

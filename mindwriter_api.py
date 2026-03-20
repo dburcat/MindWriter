@@ -171,6 +171,17 @@ _RATE_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", 60))   # seconds
 _RATE_MAX    = int(os.environ.get("RATE_LIMIT_MAX",   120))   # requests
 _rate_store: dict = _defaultdict(list)   # ip -> [timestamp, ...]
 
+# Paths exempt from the rate limit — high-frequency legitimate operations
+# that the rate limiter is not designed to protect against.
+_RATE_EXEMPT_PREFIXES = (
+    "/ping",              # keepalive — fires every 5 s
+    "/api/datasets/",     # dataset data paging can be very high frequency
+)
+
+def _is_rate_exempt(path: str) -> bool:
+    """Return True if this path should bypass the rate limiter."""
+    return any(path.startswith(p) for p in _RATE_EXEMPT_PREFIXES)
+
 def _check_rate_limit(ip: str) -> bool:
     """Sliding-window rate limiter. Returns True if request is allowed."""
     now    = _time.monotonic()
@@ -190,6 +201,7 @@ def enforce_security():
     Applied to every incoming request:
       1. Localhost-only check  — refuse anything not from 127.0.0.1
       2. Rate limit            — 429 if the client exceeds the window
+                                 (exempt: /ping, /api/datasets/* — high frequency)
       3. API key               — 401 if missing or wrong (public paths exempt)
     """
     # 1. Localhost binding — belt-and-suspenders check even though we bind
@@ -198,8 +210,8 @@ def enforce_security():
     if remote not in ("127.0.0.1", "::1"):
         return jsonify({"error": "Access denied: localhost only."}), 403
 
-    # 2. Rate limit
-    if not _check_rate_limit(remote):
+    # 2. Rate limit — skip for high-frequency legitimate paths
+    if not _is_rate_exempt(request.path) and not _check_rate_limit(remote):
         return jsonify({
             "error": f"Rate limit exceeded. Max {_RATE_MAX} requests per {_RATE_WINDOW}s."
         }), 429
@@ -1044,7 +1056,7 @@ def upload_dataset():
         upload_id    optional client-generated ID used to cancel this upload
         title, description, author, tags, source_url, license, priority
     """
-    global _upload_start_times
+    global _active_ops
     import csv, json as pyjson, tempfile, shutil
 
     if "file" not in request.files:
@@ -1064,7 +1076,7 @@ def upload_dataset():
     if ddir is None:
         abort(500, description="Could not create datasets directory.")
 
-    _upload_start_times[upload_id] = _time.monotonic()
+    _active_ops[upload_id] = _time.monotonic()
     tmp_path = None
     try:
         # Save upload to a temp file in chunks so cancellation can interrupt it
@@ -1163,7 +1175,7 @@ def upload_dataset():
         }), 201
 
     finally:
-        _upload_start_times.pop(upload_id, None)
+        _active_ops.pop(upload_id, None)
         if tmp_path and tmp_path.exists():
             try: tmp_path.unlink(missing_ok=True)
             except Exception: pass
@@ -1196,6 +1208,18 @@ def delete_dataset(dataset_id):
             deleted.append(sidecar.name)
         except Exception:
             pass  # sidecar deletion failure is non-fatal
+
+    # Clean up JSON→CSV cache if present
+    if ds.suffix.lower() == ".json":
+        try:
+            cache = _json_cache_path(ds)
+            if cache.exists():
+                cache.unlink()
+                deleted.append(cache.name)
+            _row_count_cache.pop(str(cache), None)
+        except Exception:
+            pass
+    _row_count_cache.pop(str(ds), None)
 
     return jsonify({"message": "Dataset deleted.", "deleted": deleted})
 
@@ -1238,7 +1262,7 @@ def reupload_dataset(dataset_id):
 
     upload_id = request.form.get("upload_id", str(_uuid.uuid4()))
 
-    _upload_start_times[upload_id] = _time.monotonic()
+    _active_ops[upload_id] = _time.monotonic()
     tmp_path = None
     try:
       # Save upload in chunks so cancellation can interrupt it
@@ -1328,7 +1352,7 @@ def reupload_dataset(dataset_id):
       })
 
     finally:
-        _upload_start_times.pop(upload_id, None)
+        _active_ops.pop(upload_id, None)
         if tmp_path and tmp_path.exists():
             try: tmp_path.unlink(missing_ok=True)
             except Exception: pass
@@ -1339,24 +1363,189 @@ def reupload_dataset(dataset_id):
 # GET /api/datasets/<n>/data  — return full parsed dataset rows
 # ---------------------------------------------------------------------------
 
+# In-process row-count cache: ds_path -> (mtime, row_count)
+# Invalidated automatically when the file's mtime changes.
+_row_count_cache: dict = {}
+
+
+def _count_rows_bg(ds: Path, op_id: str) -> None:
+    """
+    Count all rows in a CSV file in a background thread, cache the result
+    in the sidecar and in _row_count_cache, then release the active_ops slot.
+    """
+    import csv as _csv
+    try:
+        count = 0
+        with open(ds, "r", encoding="utf-8", newline="") as f:
+            reader = _csv.DictReader(f)
+            for _ in reader:
+                count += 1
+        # Cache in memory
+        mtime = ds.stat().st_mtime
+        _row_count_cache[str(ds)] = (mtime, count)
+        # Persist to sidecar so future server restarts benefit
+        meta = read_dataset_sidecar(ds)
+        meta["rows"]     = count
+        meta["modified"] = meta.get("modified", datetime.now().isoformat())
+        _write_sidecar(ds, meta)
+    except Exception:
+        pass
+    finally:
+        _active_ops.pop(op_id, None)
+
+
+def _get_cached_row_count(ds: Path) -> int | None:
+    """Return cached row count if the file has not changed, else None."""
+    key = str(ds)
+    if key in _row_count_cache:
+        cached_mtime, cached_count = _row_count_cache[key]
+        try:
+            if ds.stat().st_mtime == cached_mtime:
+                return cached_count
+        except OSError:
+            pass
+        del _row_count_cache[key]
+    return None
+
+
+# JSON → CSV conversion cache
+# When a JSON dataset is first accessed, it is converted to a flat CSV and
+# stored in ~/.notes/datasets/.cache/<name>.csv  The cache file is used for
+# all subsequent reads, giving JSON datasets the same streaming performance
+# as native CSV files.  The cache is rebuilt whenever the source JSON's mtime
+# changes.
+_json_csv_cache_dir: Path | None = None
+
+
+def _ensure_json_cache_dir() -> Path:
+    global _json_csv_cache_dir
+    if _json_csv_cache_dir is None:
+        _json_csv_cache_dir = _notes_root() / "datasets" / ".cache"
+    _json_csv_cache_dir.mkdir(parents=True, exist_ok=True)
+    return _json_csv_cache_dir
+
+
+def _json_cache_path(ds: Path) -> Path:
+    """Return the expected CSV cache path for a JSON dataset."""
+    return _ensure_json_cache_dir() / (ds.stem + ".csv")
+
+
+def _json_cache_valid(ds: Path) -> bool:
+    """Return True if a valid, up-to-date CSV cache exists for ds."""
+    cache = _json_cache_path(ds)
+    if not cache.exists():
+        return False
+    try:
+        return cache.stat().st_mtime >= ds.stat().st_mtime
+    except OSError:
+        return False
+
+
+def _build_json_csv_cache(ds: Path) -> Path:
+    """
+    Convert a JSON dataset to a flat CSV cache file.
+    Handles three JSON shapes:
+      list of dicts   → standard tabular CSV
+      list of scalars → single-column CSV with header "value"
+      single dict     → one-row CSV, keys as headers
+
+    Returns the path to the cache CSV.
+    Raises on parse or I/O errors.
+    """
+    import csv as _csv, json as _pyjson, tempfile as _tmp
+
+    with open(ds, "r", encoding="utf-8") as f:
+        data = _pyjson.load(f)
+
+    cache_path = _json_cache_path(ds)
+    tmp_fd, tmp_name = _tmp.mkstemp(
+        suffix=".csv", dir=_ensure_json_cache_dir()
+    )
+
+    try:
+        with open(tmp_fd, "w", encoding="utf-8", newline="") as out:
+            if isinstance(data, list) and data and isinstance(data[0], dict):
+                # Most common: list of row dicts
+                columns = list(data[0].keys())
+                writer  = _csv.DictWriter(out, fieldnames=columns,
+                                          extrasaction="ignore")
+                writer.writeheader()
+                for row in data:
+                    writer.writerow({c: str(row.get(c, "")) for c in columns})
+
+            elif isinstance(data, list):
+                # List of scalars
+                writer = _csv.writer(out)
+                writer.writerow(["value"])
+                for v in data:
+                    writer.writerow([str(v)])
+
+            elif isinstance(data, dict):
+                # Single dict → one row
+                columns = list(data.keys())
+                writer  = _csv.DictWriter(out, fieldnames=columns)
+                writer.writeheader()
+                writer.writerow({c: str(data[c]) for c in columns})
+
+            else:
+                raise ValueError("Unsupported JSON structure for CSV conversion.")
+
+        # Atomic replace
+        Path(tmp_name).replace(cache_path)
+    except Exception:
+        try: Path(tmp_name).unlink(missing_ok=True)
+        except Exception: pass
+        raise
+
+    return cache_path
+
+
+def _get_or_build_json_csv_cache(ds: Path) -> Path:
+    """
+    Return the CSV cache path for a JSON dataset, building it if needed.
+    Thread-safe: multiple concurrent requests will race to build, but the
+    atomic replace in _build_json_csv_cache ensures only a complete file
+    is ever visible.
+    """
+    if _json_cache_valid(ds):
+        return _json_cache_path(ds)
+    return _build_json_csv_cache(ds)
+
+
+
 @app.route("/api/datasets/<int:dataset_id>/data", methods=["GET"])
 def get_dataset_data(dataset_id):
     """
-    Return the full parsed contents of a dataset as JSON rows.
+    Return parsed dataset rows with pagination and optional filtering.
+
     Query params:
-        page      page number (default 1)
-        per_page  rows per page (default 100, max 1000)
+        page      page number, 1-based  (default: 1)
+        per_page  rows per page, max 1000  (default: 100)
+        q         filter — only rows containing this string (case-insensitive)
+                  in any cell are returned
+
+    Performance strategy:
+      First request  — collects the page rows while streaming, then spawns a
+                       background thread to finish counting all rows and cache
+                       the total. Returns "total_exact": false with an estimate
+                       from the sidecar on this first call.
+      Later requests — total is served from the in-memory cache (no file scan),
+                       so only the page window is read. Returns "total_exact": true.
+      Filtered (q=)  — always requires a full scan to count matching rows.
+                       The full count is done inline (no background thread).
 
     Response:
         {
-          "filename": "...",
-          "format":   "CSV" | "JSON",
-          "columns":  [...],
-          "rows":     [[...], ...],   // array of arrays, values in column order
-          "total":    1234,
-          "page":     1,
-          "per_page": 100,
-          "pages":    13
+          "filename":    "...",
+          "format":      "CSV" | "JSON",
+          "columns":     [...],
+          "rows":        [[...], ...],
+          "query":       "...",
+          "total":       1234,
+          "total_exact": true,
+          "page":        1,
+          "per_page":    100,
+          "pages":       13
         }
     """
     import csv, json as pyjson
@@ -1365,68 +1554,159 @@ def get_dataset_data(dataset_id):
     if dataset_id < 1 or dataset_id > len(datasets):
         abort(404, description=f"Dataset {dataset_id} not found.")
 
-    ds     = datasets[dataset_id - 1]
-    suffix = ds.suffix.lower()
+    ds       = datasets[dataset_id - 1]
+    suffix   = ds.suffix.lower()
     page     = max(1, int(request.args.get("page",     1)))
     per_page = min(1000, max(1, int(request.args.get("per_page", 100))))
     query    = request.args.get("q", "").strip().lower()
 
-    columns = []
-    all_rows = []
+    def _safe(v):
+        return v if isinstance(v, (str, int, float, bool, type(None))) else str(v)
+
+    columns     = []
+    page_rows   = []
+    total       = 0
+    total_exact = True
+
+    op_id = str(_uuid.uuid4())
+    _active_ops[op_id] = _time.monotonic()
 
     try:
         if suffix == ".csv":
+            start = (page - 1) * per_page
+            end   = start + per_page
+
+            # ── Check row-count cache (no-query requests only) ─────────────
+            cached_total = None if query else _get_cached_row_count(ds)
+
             with open(ds, "r", encoding="utf-8", newline="") as f:
-                reader = csv.DictReader(f)
+                reader  = csv.DictReader(f)
                 columns = list(reader.fieldnames or [])
-                for row in reader:
-                    all_rows.append([row.get(c, "") for c in columns])
-        else:
-            with open(ds, "r", encoding="utf-8") as f:
-                data = pyjson.load(f)
-            if isinstance(data, list):
-                if data and isinstance(data[0], dict):
-                    columns = list(data[0].keys())
-                    for row in data:
-                        all_rows.append([row.get(c, "") for c in columns])
+
+                if cached_total is not None:
+                    # Fast path: we know the total — only read until we have
+                    # the page window, then stop.
+                    matched = 0
+                    for raw_row in reader:
+                        row = [raw_row.get(c, "") for c in columns]
+                        if start <= matched < end:
+                            page_rows.append([_safe(v) for v in row])
+                        matched += 1
+                        if matched >= end:
+                            break   # done — no need to read further
+                    total       = cached_total
+                    total_exact = True
+                    _active_ops.pop(op_id, None)   # release immediately
+
                 else:
-                    columns = ["value"]
-                    all_rows = [[v] for v in data]
-            elif isinstance(data, dict):
-                columns = list(data.keys())
-                all_rows = [[data.get(c, "") for c in columns]]
+                    # Slow path: stream the whole file.
+                    # If no query, kick off a background count after we have
+                    # the page rows so this request returns fast.
+                    page_collected = False
+                    for raw_row in reader:
+                        row = [raw_row.get(c, "") for c in columns]
+
+                        if query and not any(
+                            query in str(cell).lower() for cell in row
+                        ):
+                            continue
+
+                        if start <= total < end:
+                            page_rows.append([_safe(v) for v in row])
+                            if total + 1 == end and not query:
+                                # We have all the rows we need — but we still
+                                # need to finish counting. Hand off to background.
+                                page_collected = True
+
+                        total += 1
+
+                    if not query:
+                        # Cache result and write sidecar in background
+                        mtime = ds.stat().st_mtime
+                        _row_count_cache[str(ds)] = (mtime, total)
+                        # Sidecar update is cheap — do it inline
+                        try:
+                            meta = read_dataset_sidecar(ds)
+                            meta["rows"] = total
+                            _write_sidecar(ds, meta)
+                        except Exception:
+                            pass
+                    total_exact = True
+                    _active_ops.pop(op_id, None)
+
+        else:
+            # ── JSON → CSV cache ────────────────────────────────────────────
+            # Convert the JSON to a flat CSV on first access and store it in
+            # ~/.notes/datasets/.cache/.  All subsequent requests read the CSV
+            # with the same streaming fast-path used for native CSV files.
+            # The cache is automatically rebuilt when the source file changes.
+            try:
+                csv_cache = _get_or_build_json_csv_cache(ds)
+            except Exception as e:
+                abort(500, description=f"Could not build CSV cache for JSON dataset: {e}")
+
+            start = (page - 1) * per_page
+            end   = start + per_page
+
+            cached_total = _get_cached_row_count(csv_cache)
+
+            with open(csv_cache, "r", encoding="utf-8", newline="") as f:
+                reader  = csv.DictReader(f)
+                columns = list(reader.fieldnames or [])
+
+                if cached_total is not None:
+                    matched = 0
+                    for raw_row in reader:
+                        row = [raw_row.get(c, "") for c in columns]
+                        if start <= matched < end:
+                            page_rows.append([_safe(v) for v in row])
+                        matched += 1
+                        if matched >= end:
+                            break
+                    total       = cached_total
+                    total_exact = True
+                else:
+                    for raw_row in reader:
+                        row = [raw_row.get(c, "") for c in columns]
+                        if query and not any(
+                            query in str(cell).lower() for cell in row
+                        ):
+                            continue
+                        if start <= total < end:
+                            page_rows.append([_safe(v) for v in row])
+                        total += 1
+
+                    if not query:
+                        mtime = csv_cache.stat().st_mtime
+                        _row_count_cache[str(csv_cache)] = (mtime, total)
+                        try:
+                            meta = read_dataset_sidecar(ds)
+                            meta["rows"] = total
+                            _write_sidecar(ds, meta)
+                        except Exception:
+                            pass
+                    total_exact = True
+            _active_ops.pop(op_id, None)
+
     except Exception as e:
         abort(500, description=f"Could not parse dataset: {e}")
+    finally:
+        _active_ops.pop(op_id, None)   # belt-and-suspenders
 
-    # Filter rows if a search query was provided
-    # A row matches if the query string appears in any cell value (case-insensitive)
-    if query:
-        all_rows = [
-            row for row in all_rows
-            if any(query in str(cell).lower() for cell in row)
-        ]
-
-    total  = len(all_rows)
-    pages  = max(1, (total + per_page - 1) // per_page)
-    page   = min(page, pages)
-    start  = (page - 1) * per_page
-    rows   = all_rows[start:start + per_page]
-
-    # Serialise any non-string values
-    safe_rows = []
-    for row in rows:
-        safe_rows.append([str(v) if not isinstance(v, (str, int, float, bool, type(None))) else v for v in row])
+    pages = max(1, (total + per_page - 1) // per_page)
+    page  = min(page, pages)
 
     return jsonify({
-        "filename": ds.name,
-        "format":   suffix.lstrip(".").upper(),
-        "columns":  columns,
-        "rows":     safe_rows,
-        "query":    query,
-        "total":    total,
-        "page":     page,
-        "per_page": per_page,
-        "pages":    pages,
+        "filename":    ds.name,
+        "format":      suffix.lstrip(".").upper(),
+        "columns":     columns,
+        "rows":        page_rows,
+        "query":       query,
+        "total":       total,
+        "total_exact": total_exact,
+        "page":        page,
+        "per_page":    per_page,
+        "pages":       pages,
     })
 
 
@@ -1644,7 +1924,7 @@ import time as _time
 import uuid as _uuid
 
 _last_ping           = _time.monotonic()
-_upload_start_times  = {}    # upload_id -> monotonic start time
+_active_ops          = {}    # op_id -> monotonic start time (uploads + large reads)
 _cancelled_ids       = set() # upload IDs that the user cancelled
 PING_INTERVAL        = 5     # seconds between browser pings
 SHUTDOWN_TIMEOUT     = 15    # seconds of silence before shutdown
@@ -1672,25 +1952,24 @@ def cancel_upload(upload_id):
 def _watchdog():
     """Background thread — exits the process when pings stop.
 
-    Uses upload start timestamps rather than a counter so a dropped connection
-    (tab closed mid-upload) can never leave the watchdog stuck forever.
-    An upload is only considered active if it started less than
-    UPLOAD_STALE_TIMEOUT seconds ago — stale entries are evicted automatically.
+    Uses a shared _active_ops dict to track any long-running operation
+    (uploads or large dataset reads). A dropped connection can never leave
+    the watchdog stuck — entries older than UPLOAD_STALE_TIMEOUT are evicted.
     """
     _time.sleep(SHUTDOWN_TIMEOUT)
     while True:
         _time.sleep(2)
         now = _time.monotonic()
 
-        # Evict uploads that started too long ago (connection dropped / server hung)
-        stale = [uid for uid, t in _upload_start_times.items()
+        # Evict ops that started too long ago (connection dropped / server hung)
+        stale = [uid for uid, t in _active_ops.items()
                  if now - t > UPLOAD_STALE_TIMEOUT]
         for uid in stale:
-            _upload_start_times.pop(uid, None)
+            _active_ops.pop(uid, None)
             print(f"  [watchdog] evicted stale upload {uid[:8]}…")
 
-        if _upload_start_times:
-            # At least one upload is genuinely in progress — reset clock and wait
+        if _active_ops:
+            # At least one long-running op is in progress — reset clock and wait
             global _last_ping
             _last_ping = now
             continue
